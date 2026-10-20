@@ -1,0 +1,85 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "moodlesh"
+version = "0.1.0a1"
+description = "A command line for Moodle course structure: navigate courses like folders, script changes, apply them to many courses"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+keywords = ["moodle", "lms", "cli", "shell", "dsl", "automation", "e-learning"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Education",
+    "Intended Audience :: System Administrators",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Education",
+    "Typing :: Typed",
+]
+dependencies = [
+    "httpx>=0.27",
+    "lark>=1.2",
+    "playwright>=1.64.0",
+    "prompt-toolkit>=3.0",
+    "rich>=13.7",
+]
+
+[project.urls]
+Homepage = "https://github.com/borsattoz/moodlesh"
+Issues = "https://github.com/borsattoz/moodlesh/issues"
+Changelog = "https://github.com/borsattoz/moodlesh/blob/main/CHANGELOG.md"
+
+[project.scripts]
+moodlesh = "moodlesh.cli.main:main"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.10",
+    "pytest>=8.0",
+    "ruff>=0.5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/moodlesh"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+# tests/integration runs only when MOODLESH_IT_URL points to a disposable Moodle site
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "N", "PL", "PT"]
+ignore = [
+    "PLR0913",  # too many arguments: fine for keyword-only library functions
+    "PLR2004",  # magic numbers in tests and position checks
+    "RUF001",   # ambiguous characters: the tree uses box-drawing glyphs
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "src"
+packages = ["moodlesh"]
+
+[[tool.mypy.overrides]]
+module = ["playwright.*"]
+ignore_missing_imports = true
+
+[tool.ruff.lint.isort]
+known-first-party = ["moodlesh"]
+known-local-folder = ["conftest", "fakes"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR2004", "SLF001", "PLC0415"]

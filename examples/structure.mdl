@@ -1,0 +1,6 @@
+# Add a practice section to the Physics course
+cd /PHY1
+mkdir "Practice" --at 1
+mkdir "Guided exercises" --into Practice
+mkdir "Past exams" --into Practice
+tree -d

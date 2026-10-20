@@ -1,0 +1,35 @@
+// Syntax of the moodlesh DSL.
+//
+// A script is a sequence of commands separated by newlines or ";".
+// Each command is a word followed by arguments: values (words or quoted
+// strings) and options (-x, --name, --name=value).
+// What the arguments mean is defined by the command specs, not by the
+// grammar: adding a command does not require touching this file.
+
+start: _seps? (command (_seps command)*)? _seps?
+
+command: WORD _arg*
+
+_arg: option
+    | value
+
+option: OPTION
+      | OPTION_ASSIGN value
+
+value: WORD
+     | STRING
+
+_seps: (";" | NEWLINE)+
+
+// Priorities make sure "--at=3" and "--dirs" are not read as plain words.
+OPTION_ASSIGN.3: /--?[A-Za-z][A-Za-z0-9-]*=/
+OPTION.2: /--?[A-Za-z][A-Za-z0-9-]*/
+WORD: /[^\s;"'#][^\s;"']*/
+STRING: /"(\\.|[^"\\\n])*"/
+      | /'[^'\n]*'/
+
+COMMENT: /#[^\n]*/
+NEWLINE: /(\r?\n)+/
+
+%ignore /[ \t]+/
+%ignore COMMENT
