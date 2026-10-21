@@ -49,8 +49,9 @@ moodle:/PHY1> ls 1
 1  resource    Linear motion notes
 2  subsection  Exercises/           2 activities
 3  assign      Lab report
-moodle:/PHY1> mkdir "Optics" --at 2
+moodle:/PHY1> mkdir "Optics" --at 2; mv 2 "Newtonian dynamics"
 created section 2 'Optics'
+renamed 'Dynamics' to 'Newtonian dynamics'
 ```
 
 ## Try it in a minute
