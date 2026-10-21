@@ -15,7 +15,8 @@ Status: early alpha (0.1.0a1), tested on Moodle 4.5 and 5.1.
 > [!WARNING]
 > **Use at your own risk.** moodlesh changes real courses and has no undo yet.
 > Most of its code was written with an AI assistant and is still being
-> reviewed (see [How moodlesh is built](#how-moodlesh-is-built)). Before
+> reviewed (see [How moodlesh is built](#how-moodlesh-is-built) and
+> [the review progress](https://github.com/borsattoz/moodlesh/issues/3)). Before
 > changing courses that are in use, try the change with `--dry-run`, then on a
 > test course, and keep a Moodle backup of the courses involved. moodlesh is
 > provided as is, without warranty of any kind (see the [license](LICENSE)).
@@ -365,10 +366,20 @@ have access to the server, moosh covers many more administrative tasks.
 
 ## How moodlesh is built
 
-moodlesh is developed by [@borsattoz](https://github.com/borsattoz) with extensive help from an AI
-assistant (Claude, by Anthropic). Most of the code, tests and documentation
-were generated in conversation with it, and @borsattoz is reviewing them
-progressively; this note will be updated as the review advances.
+moodlesh is developed by [@borsattoz](https://github.com/borsattoz) with
+extensive help from an AI assistant (Claude, by Anthropic). Most of the code,
+tests and documentation were generated in conversation with it, and
+@borsattoz is reviewing them file by file.
+
+The review is tracked in public, in
+[issue #3](https://github.com/borsattoz/moodlesh/issues/3): each file is ticked
+off with the commit it was reviewed at, and every problem found becomes an
+issue labelled
+[`review-finding`](https://github.com/borsattoz/moodlesh/labels/review-finding).
+The stable 0.1.0 release will come out when the review is complete and its
+findings are fixed (milestone
+[0.1.0](https://github.com/borsattoz/moodlesh/milestones)). New changes reach
+the code only through reviewed pull requests.
 
 What has been checked so far:
 
