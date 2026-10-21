@@ -1,7 +1,30 @@
 # CLAUDE.md
 
-Context for working on moodlesh. The README covers usage and architecture; this
-file records the decisions behind the code and the conventions to keep.
+Context for working on moodlesh. The README is the single user document
+(overview, then full reference); this file records the decisions behind the
+code and the conventions to keep.
+
+Docs style: plain, friendly, factual, in the second person. No emoji, no
+marketing phrasing, only functional badges (CI, license): an earlier,
+promotional README was rejected as hard to read, and a later, purely
+reference one as too dry. Engage readers with a concrete problem and its
+solution, not with adjectives. Be candid about limits ("Is moodlesh for you?"
+says who should *not* use it). For now all user documentation stays in
+README.md, by the maintainer's choice: overview and quick start first, then a
+table of contents and the full reference.
+
+README structure to keep: title, badges, one-line definition, short
+paragraph, status box (alpha, tested versions, AI note) → "What it looks like"
+(the "Exam preparation" script, framed against course templates and copies,
+which help when a course is created, not once courses are running) → "Try it
+in a minute" (install, `--demo`) → "Is moodlesh for you?" → "Features"
+(available now / planned) → "Contents" → reference sections → "How moodlesh
+is built" → "Development" → "License". Examples must be real output: generate
+them with `moodlesh --demo`.
+
+Positioning: the maintainer wants the emphasis on **scripting and automation**
+rather than on bulk editing as such. Keep the repository description, the
+README's opening line and the GitHub topics consistent with that keyword.
 
 ## What this is
 
@@ -212,8 +235,8 @@ execution stops at the first runtime error and reports the line.
   bot protection this fails silently and only the local file is deleted.
 - Roadmap (README): move and delete, undo from the journal, activities and
   resources, dates and visibility in bulk, copy/diff between courses, search
-  across courses, export/import of outlines. Keep the README's "Available
-  today" / "On the roadmap" lists and `CHANGELOG.md` (`[Unreleased]`) in sync
+  across courses, export/import of outlines. Keep the README's "Features"
+  list (available now / planned), the reference sections and `CHANGELOG.md` (`[Unreleased]`) in sync
   with what is actually implemented: never advertise a feature that is not there.
 - Known limitation: `rename` and the rename that follows `mkdir` need
   `moodle/course:view` (to read the course format), so editing teachers
@@ -224,8 +247,9 @@ execution stops at the first runtime error and reports the line.
 - The maintainer is Italian: talk to him in Italian. Everything in the
   repository (code, docs, commit messages, issues) stays in English.
 - Most of the code was generated with an AI assistant and has **not yet been
-  fully reviewed** by the maintainer; the README says so ("How moodlesh was
-  built"). Keep that note accurate as the review progresses. When he asks,
+  fully reviewed** by the maintainer (@borsattoz on GitHub); the README says
+  so in the status box and in "How moodlesh is built", which also lists what
+  has been verified. Update that section as the review progresses. When he asks,
   walk him through a module explaining the *why*, not just the *what*.
 - He commits under his own name. AI-assisted commits carry a
   `Co-Authored-By:` trailer.
@@ -238,15 +262,17 @@ execution stops at the first runtime error and reports the line.
 
 ## Handoff: where things stand (October 2026)
 
-- The git history was deliberately reset: the next steps are `git init`, one
-  initial commit ("Initial public alpha (0.1.0a1)"), creating the public
-  repository `borsattoz/moodlesh` with `gh`, setting it as `origin`, pushing.
-- `.github/workflows/ci.yml` may still need to be put in place by hand (the
-  previous tooling could not write to `.github/`): check it exists before the
-  first push.
-- Proposed workflow: `main` always green and protected (pull requests only,
-  CI required); one branch and one pull request per change
-  (`feat/...`, `fix/...`, `docs/...`); the maintainer reviews and merges.
+- Published at https://github.com/borsattoz/moodlesh (public), with CI and
+  topics set. The README was rewritten in the plain style described above.
+- Next: tag `v0.1.0a1` (annotated) and create a GitHub pre-release with short,
+  dedicated release notes (not the whole CHANGELOG).
+- Pending decision: align the repository description and the README's
+  opening line on scripting. Proposed description: "Scriptable command line
+  for Moodle courses: browse them like folders and automate changes to their
+  structure".
+- Workflow: `main` always green; one branch and one pull request per change
+  (`feat/...`, `fix/...`, `docs/...`); the maintainer reviews and merges
+  (squash). Protecting `main` (pull requests only, CI required) is still to do.
 - The Moodle 4.5.15 and 5.1.8 test sites used so far no longer exist. To run
   `tests/integration` again, set up a disposable site (e.g. `moodlehq/moodle-docker`),
   then `php integration/seed_site.php /path/to/moodle`. Moodle 5.2+ needs
@@ -255,5 +281,10 @@ execution stops at the first runtime error and reports the line.
 - Still to confirm on the maintainer's real site (browser transport): `ls`,
   `tree`, then `-n` (dry run), then real writes on a test course, then a bulk
   dry run.
+- Ideas raised so far, beyond the README roadmap: show Moodle's readable
+  activity labels ("File", "Assignment") instead of internal module names
+  (`resource`, `assign`) in `ls` and `tree`; publish on PyPI; a short terminal
+  GIF of `--demo` at the top of the README; present moodlesh on the moodle.org
+  forums once it is more mature.
 - Candidate next features, in a sensible order: move sections/subsections,
   delete empty ones, undo from the journal; then activities.
