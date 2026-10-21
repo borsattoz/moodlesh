@@ -10,10 +10,15 @@ commands, and apply the same change to one course or to a whole category. It
 works through the Moodle website with your own account, single sign-on
 included: no server access, plugins or web services are needed.
 
-> **Status:** early alpha (0.1.0a1), tested on Moodle 4.5 and 5.1. Most of the
-> code was written with an AI assistant and is still being reviewed: see
-> [How moodlesh is built](#how-moodlesh-is-built). Use `--dry-run` or a test
-> course before making real changes.
+Status: early alpha (0.1.0a1), tested on Moodle 4.5 and 5.1.
+
+> [!WARNING]
+> **Use at your own risk.** moodlesh changes real courses and has no undo yet.
+> Most of its code was written with an AI assistant and is still being
+> reviewed (see [How moodlesh is built](#how-moodlesh-is-built)). Before
+> changing courses that are in use, try the change with `--dry-run`, then on a
+> test course, and keep a Moodle backup of the courses involved. moodlesh is
+> provided as is, without warranty of any kind (see the [license](LICENSE)).
 
 ## What it looks like
 
@@ -49,9 +54,9 @@ moodle:/PHY1> ls 1
 1  resource    Linear motion notes
 2  subsection  Exercises/           2 activities
 3  assign      Lab report
-moodle:/PHY1> mkdir "Optics" --at 2; mv 2 "Newtonian dynamics"
-created section 2 'Optics'
+moodle:/PHY1> mv 2 "Newtonian dynamics"; mkdir "Optics" --at 2
 renamed 'Dynamics' to 'Newtonian dynamics'
+created section 2 'Optics'
 ```
 
 ## Try it in a minute
@@ -331,6 +336,8 @@ changes.
 
 - Before writing anything, moodlesh checks that the whole operation can be
   completed, so a missing permission does not leave a partial change.
+- There is no undo yet: a change made in Moodle stays made. The change journal
+  records what was done, so you can revert it by hand or from a course backup.
 - The saved session (in `~/.local/state/moodlesh/`, permissions 600) gives the
   same access as your password while it is valid. `moodlesh logout` removes it.
 - moodlesh talks only to the Moodle site you give it. There is no telemetry.
