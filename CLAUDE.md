@@ -123,7 +123,9 @@ Moodle error codes (verified on 4.5):
   `DryRunBackend` (copies each course into an `InMemoryBackend` with negative
   ids, simulates writes, calls the real `check_writable`) or
   `JournalingBackend` (one JSONL line per write, success or failure). `--demo`
-  gets dry-run only.
+  gets dry-run only. An operation that stops after its first write raises
+  `PartialChangeError` (with the created section, if known), which the journal
+  records as `"partial": true`.
 - `cli/bulk.py`: one `Interpreter` per course, starting at that course; stop
   at the first failing course unless `--keep-going`; confirmation unless
   `--dry-run` or `--yes`; refused without a TTY (exit 2).

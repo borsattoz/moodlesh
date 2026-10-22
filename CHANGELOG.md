@@ -13,6 +13,10 @@ change behaviour).
   no longer fails after the creation with an unclear error: the new item is
   recognised by where it was inserted, and if that is not possible moodlesh
   stops with a message saying that the item was created but not named.
+- The change journal no longer reports a failed operation when part of it was
+  written (for example a section created but not named): such entries now have
+  `"partial": true` and describe what exists in Moodle. Library users get a
+  `PartialChangeError` carrying the created section.
 
 ## [0.1.0a1] - first public alpha
 

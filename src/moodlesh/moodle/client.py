@@ -25,7 +25,13 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from moodlesh.core.backend import item_insertion_before, section_insertion_target
-from moodlesh.core.errors import BackendError, InvalidOperationError, NotFoundError
+from moodlesh.core.errors import (
+    BackendError,
+    InvalidOperationError,
+    MoodleshError,
+    NotFoundError,
+    PartialChangeError,
+)
 from moodlesh.core.models import Course, CourseSummary, Section, Subsection
 from moodlesh.moodle.state import build_course
 from moodlesh.moodle.transport import Transport
@@ -121,7 +127,7 @@ class MoodleBackend:
         if new_id is None:
             raise _unidentified("section", course_id, [s for s in sections if s.id not in existing], name)
         created = next(s for s in sections if s.id == new_id)
-        return self._apply_name(course_id, created, name)
+        return self._apply_name(course_id, created, name, "section")
 
     def add_subsection(
         self,
@@ -156,7 +162,7 @@ class MoodleBackend:
         if not isinstance(created, Subsection):
             new_items = [i.section for i in refreshed.subsections if i.cmid not in existing]
             raise _unidentified("subsection", course_id, new_items, name)
-        return self._apply_name(course_id, created.section, name)
+        return self._apply_name(course_id, created.section, name, "subsection")
 
     def _create_subsection_module(self, course_id: int, parent: Section, before_cmid: int | None) -> None:
         args: dict[str, Any] = {"courseid": course_id, "modname": SUBSECTION_MODNAME}
@@ -188,10 +194,18 @@ class MoodleBackend:
             },
         )
 
-    def _apply_name(self, course_id: int, section: Section, name: str | None) -> Section:
+    def _apply_name(self, course_id: int, section: Section, name: str | None, what: str) -> Section:
+        """Name a section just created; if that fails, say that the section exists anyway."""
         if name is None:
             return section
-        self.rename_section(course_id, section.id, name)
+        try:
+            self.rename_section(course_id, section.id, name)
+        except MoodleshError as exc:
+            raise PartialChangeError(
+                f"a {what} was created in course {course_id} (id {section.id}), but it could not be "
+                f"named '{name}': {exc}. Rename it in Moodle or with moodlesh.",
+                created=section,
+            ) from exc
         return dataclasses.replace(section, name=name)
 
 
@@ -244,13 +258,17 @@ def _identify_new(
     return run[0] if len(run) == 1 else None
 
 
-def _unidentified(what: str, course_id: int, candidates: Sequence[Section], name: str | None) -> BackendError:
+def _unidentified(
+    what: str, course_id: int, candidates: Sequence[Section], name: str | None
+) -> PartialChangeError:
     """The error for a creation that succeeded but cannot be told apart from other changes."""
     if not candidates:
-        return BackendError(f"Moodle reported success, but no new {what} was found in course {course_id}")
+        return PartialChangeError(
+            f"Moodle reported success, but no new {what} was found in course {course_id}"
+        )
     listed = ", ".join(f"'{s.name}' (id {s.id})" for s in candidates)
     unnamed = f"; the name '{name}' was not applied" if name is not None else ""
-    return BackendError(
+    return PartialChangeError(
         f"a {what} was created in course {course_id}, but the course changed at the same time and it "
         f"cannot be told apart from the other new ones: {listed}{unnamed}. Check the course in Moodle."
     )

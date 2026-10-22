@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from moodlesh.core.models import Section
+
 
 class MoodleshError(Exception):
     """Root of all moodlesh exceptions."""
@@ -28,3 +33,15 @@ class BackendError(MoodleshError):
 
 class AuthenticationError(BackendError):
     """Expired session, or invalid sesskey or token."""
+
+
+class PartialChangeError(BackendError):
+    """An operation stopped after it had already changed Moodle.
+
+    For example a section was created but could not be named. `created` is the
+    item that now exists in Moodle, or `None` if it cannot be identified.
+    """
+
+    def __init__(self, message: str, *, created: Section | None = None) -> None:
+        super().__init__(message)
+        self.created = created
