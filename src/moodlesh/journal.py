@@ -54,15 +54,18 @@ class Journal:
             fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-class JournalingBackend:
+class JournalingBackend(CourseBackend):
     """`CourseBackend` decorator that records every write in a `Journal`."""
 
     def __init__(self, inner: CourseBackend, journal: Journal) -> None:
         self._inner = inner
         self._journal = journal
 
-    def __getattr__(self, name: str) -> Any:  # e.g. check_writable
-        return getattr(self._inner, name)
+    def check_writable(self, course_id: int, *, needs_rename: bool = True) -> None:
+        """Run the wrapped backend's preflight checks, if it has any (it writes nothing)."""
+        check = getattr(self._inner, "check_writable", None)
+        if check is not None:
+            check(course_id, needs_rename=needs_rename)
 
     def list_courses(self, name_filter: str | None = None) -> list[CourseSummary]:
         return self._inner.list_courses(name_filter)

@@ -24,7 +24,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from moodlesh.core.backend import item_insertion_before, section_insertion_target
+from moodlesh.core.backend import CourseBackend, item_insertion_before, section_insertion_target
 from moodlesh.core.errors import (
     BackendError,
     InvalidOperationError,
@@ -42,7 +42,7 @@ SUBSECTION_MODNAME = "subsection"
 EDIT_CAPABILITY = "moodle/course:update"
 
 
-class MoodleBackend:
+class MoodleBackend(CourseBackend):
     """`CourseBackend` implementation for Moodle.
 
     Args:

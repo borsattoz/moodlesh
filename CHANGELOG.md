@@ -17,6 +17,10 @@ change behaviour).
   written (for example a section created but not named): such entries now have
   `"partial": true` and describe what exists in Moodle. Library users get a
   `PartialChangeError` carrying the created section.
+- The safety layers can no longer silently skip a write operation added in the
+  future: every method of `CourseBackend` is abstract, all backends inherit it
+  explicitly, and `JournalingBackend` no longer forwards unknown attributes. A
+  layer that forgets an operation fails type checking and cannot be created.
 
 ## [0.1.0a1] - first public alpha
 

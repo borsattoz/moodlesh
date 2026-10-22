@@ -8,7 +8,9 @@ from pathlib import Path
 import pytest
 
 from moodlesh.cli.interpreter import Interpreter
+from moodlesh.core.backend import CourseBackend
 from moodlesh.core.errors import BackendError, InvalidOperationError, PartialChangeError
+from moodlesh.core.models import CourseSummary
 from moodlesh.dryrun import DryRunBackend
 from moodlesh.journal import Journal, JournalingBackend
 from moodlesh.memory import InMemoryBackend
@@ -120,3 +122,24 @@ def test_journal_partial_change_without_identified_item(tmp_path: Path) -> None:
     [entry] = (json.loads(line) for line in path.read_text().splitlines())
     assert entry["partial"] is True
     assert entry["result"] is None
+
+
+@pytest.mark.parametrize("backend_class", [InMemoryBackend, MoodleBackend, DryRunBackend, JournalingBackend])
+def test_every_backend_implements_every_operation(backend_class: type) -> None:
+    # Abstract methods left unimplemented would make the class impossible to create.
+    assert not backend_class.__abstractmethods__
+
+
+def test_a_safety_layer_missing_an_operation_cannot_be_created(backend: InMemoryBackend) -> None:
+    # What would happen if a new write operation were added to CourseBackend and
+    # forgotten in a safety layer: the layer fails as soon as it is created.
+    class Incomplete(CourseBackend):
+        def list_courses(self, name_filter: str | None = None) -> list[CourseSummary]:
+            return backend.list_courses(name_filter)
+
+    with pytest.raises(TypeError, match="abstract"):
+        Incomplete()  # type: ignore[abstract]
+
+
+def test_journaling_backend_has_no_catch_all_forwarding() -> None:
+    assert "__getattr__" not in vars(JournalingBackend)

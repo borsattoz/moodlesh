@@ -34,10 +34,13 @@ special cases.
 - **Never bypass bot protection** (no TLS spoofing, no copying `cf_clearance`
   into httpx, no headless tricks). The browser transport sends requests with
   `fetch` from a real, visible Chromium window; the user passes any check.
-- **Every write goes through both safety layers**: `DryRunBackend` and
-  `JournalingBackend` must implement each write method of `CourseBackend`.
-  `JournalingBackend.__getattr__` forwards unknown attributes, so a write it
-  does not define would run unrecorded (see the `review-finding` issues).
+- **Every write goes through both safety layers**: `CourseBackend` is a
+  Protocol whose methods are all `@abstractmethod`, and every backend
+  (`MoodleBackend`, `InMemoryBackend`, `DryRunBackend`, `JournalingBackend`)
+  inherits it explicitly, so a forgotten operation fails mypy and cannot be
+  instantiated. Never add a catch-all `__getattr__` to a backend: it hides
+  missing methods from mypy. External backends may still conform without
+  inheriting.
 - **No details of real Moodle instances** (URLs, identity providers,
   institutions) in the repository. Say "a Moodle 4.5 site with SSO and
   Cloudflare".

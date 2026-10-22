@@ -13,6 +13,7 @@ Position conventions (always 1-based, as shown by `ls`):
 
 from __future__ import annotations
 
+from abc import abstractmethod
 from typing import Protocol, runtime_checkable
 
 from moodlesh.core.errors import InvalidOperationError
@@ -21,20 +22,31 @@ from moodlesh.core.models import Course, CourseSummary, Section
 
 @runtime_checkable
 class CourseBackend(Protocol):
-    """Course operations, independent of how we talk to Moodle."""
+    """Course operations, independent of how we talk to Moodle.
 
+    Any class with these methods is a backend: implementing it does not require
+    inheriting from it. The backends of this package do inherit from it
+    explicitly, and every method is abstract, so a backend or a safety layer
+    (`DryRunBackend`, `JournalingBackend`) that forgets an operation cannot even
+    be created: mypy reports it, and so does Python at runtime.
+    """
+
+    @abstractmethod
     def list_courses(self, name_filter: str | None = None) -> list[CourseSummary]:
         """List the visible courses, filtered by name if `name_filter` is given."""
         ...
 
+    @abstractmethod
     def get_course(self, course_id: int) -> Course:
         """Return the full structure of a course."""
         ...
 
+    @abstractmethod
     def add_section(self, course_id: int, position: int | None = None, name: str | None = None) -> Section:
         """Add a top-level section and return it."""
         ...
 
+    @abstractmethod
     def add_subsection(
         self,
         course_id: int,
@@ -45,6 +57,7 @@ class CourseBackend(Protocol):
         """Add a subsection to a section and return the delegated section created."""
         ...
 
+    @abstractmethod
     def rename_section(self, course_id: int, section_id: int, name: str) -> None:
         """Rename a section (top-level or delegated)."""
         ...
