@@ -501,7 +501,7 @@ wheels = [
 
 [[package]]
 name = "moodlesh"
-version = "0.1.0a1"
+version = "0.1.0.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },

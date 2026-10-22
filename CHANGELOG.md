@@ -7,22 +7,8 @@ change behaviour).
 
 ## [Unreleased]
 
-### Fixed
-
-- Creating a section or subsection while someone else changes the same course
-  no longer fails after the creation with an unclear error: the new item is
-  recognised by where it was inserted, and if that is not possible moodlesh
-  stops with a message saying that the item was created but not named.
-- The change journal no longer reports a failed operation when part of it was
-  written (for example a section created but not named): such entries now have
-  `"partial": true` and describe what exists in Moodle. Library users get a
-  `PartialChangeError` carrying the created section.
-- The safety layers can no longer silently skip a write operation added in the
-  future: every method of `CourseBackend` is abstract, all backends inherit it
-  explicitly, and `JournalingBackend` no longer forwards unknown attributes. A
-  layer that forgets an operation fails type checking and cannot be created.
-
-## [0.1.0a1] - first public alpha
+Nothing has been released yet. This section describes what the first release,
+0.1.0, will contain.
 
 ### Added
 
@@ -50,6 +36,14 @@ change behaviour).
   `InMemoryBackend`, `DryRunBackend`, `JournalingBackend`.
 - Integration test suite for real, disposable Moodle sites
   (`tests/integration`, `integration/seed_site.php`).
+- Robust handling of operations that stop half-way: a new section or
+  subsection is recognised by where it was inserted, even if someone else
+  changes the course at the same time; if an operation stops after it has
+  already changed Moodle, moodlesh says so and the journal records it as
+  `"partial": true` (`PartialChangeError` in the library).
+- An enforceable backend contract: every method of `CourseBackend` is
+  abstract and every backend inherits it explicitly, so a safety layer that
+  forgets an operation fails type checking and cannot be created.
 
 ### Compatibility
 

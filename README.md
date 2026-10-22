@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/borsattoz/moodlesh/actions/workflows/ci.yml/badge.svg)](https://github.com/borsattoz/moodlesh/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Project Status: WIP – Initial development is in progress, but there has not yet been a stable, usable release suitable for the public.](https://www.repostatus.org/badges/latest/wip.svg)](https://www.repostatus.org/#wip)
 
 Edit the structure of many Moodle courses at once, from the command line.
 
@@ -10,7 +11,9 @@ commands, and apply the same change to one course or to a whole category. It
 works through the Moodle website with your own account, single sign-on
 included: no server access, plugins or web services are needed.
 
-Status: early alpha (0.1.0a1), tested on Moodle 4.5 and 5.1.
+Status: in development, not released yet. It works and has been tested on
+Moodle 4.5 and 5.1, but it is not ready for general use: the code on `main`
+changes often, and commands and options may still change.
 
 > [!WARNING]
 > **Use at your own risk.** moodlesh changes real courses and has no undo yet.
@@ -381,7 +384,7 @@ The review is tracked in public, in
 off with the commit it was reviewed at, and every problem found becomes an
 issue labelled
 [`review-finding`](https://github.com/borsattoz/moodlesh/labels/review-finding).
-The stable 0.1.0 release will come out when the review is complete and its
+The first release, 0.1.0, will come out when the review is complete and its
 findings are fixed (milestone
 [0.1.0](https://github.com/borsattoz/moodlesh/milestones)). New changes reach
 the code only through reviewed pull requests.
