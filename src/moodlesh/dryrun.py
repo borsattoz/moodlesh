@@ -17,7 +17,7 @@ from moodlesh.core.models import Course, CourseSummary, Section
 from moodlesh.memory import InMemoryBackend
 
 
-class DryRunBackend:
+class DryRunBackend(CourseBackend):
     """`CourseBackend` that never writes to the backend it wraps."""
 
     def __init__(self, real: CourseBackend) -> None:

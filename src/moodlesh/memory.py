@@ -11,7 +11,7 @@ import itertools
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
-from moodlesh.core.backend import item_insertion_before, section_insertion_target
+from moodlesh.core.backend import CourseBackend, item_insertion_before, section_insertion_target
 from moodlesh.core.errors import InvalidOperationError, NotFoundError
 from moodlesh.core.models import Activity, Course, CourseSummary, Section, SectionItem, Subsection
 
@@ -52,7 +52,7 @@ class _Course:
         return next((s for top in self.sections for s in top.walk() if s.id == section_id), None)
 
 
-class InMemoryBackend:
+class InMemoryBackend(CourseBackend):
     """A fully in-memory `CourseBackend` implementation."""
 
     def __init__(self, *, first_id: int = 1000, id_step: int = 1) -> None:
