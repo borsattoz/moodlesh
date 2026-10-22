@@ -4,14 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "moodlesh"
-version = "0.1.0a1"
+version = "0.1.0.dev0"
 description = "A command line for Moodle course structure: navigate courses like folders, script changes, apply them to many courses"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 keywords = ["moodle", "lms", "cli", "shell", "dsl", "automation", "e-learning"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 2 - Pre-Alpha",
     "Environment :: Console",
     "Intended Audience :: Education",
     "Intended Audience :: System Administrators",

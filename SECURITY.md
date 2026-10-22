@@ -6,8 +6,8 @@ Please **do not open a public issue** for security problems. Use GitHub's
 [private vulnerability reporting](https://github.com/borsattoz/moodlesh/security/advisories/new)
 instead. You should get an answer within a week.
 
-moodlesh is maintained by volunteers and is alpha software: only the latest
-release receives fixes.
+moodlesh is maintained by volunteers and is still in development, with no
+release yet: fixes go to the `main` branch.
 
 ## What moodlesh stores and sends
 

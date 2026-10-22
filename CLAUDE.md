@@ -192,10 +192,14 @@ feature that does not exist.
 Most of the code was generated with an AI assistant and is being reviewed by
 the maintainer, file by file, in public: issue #3 tracks it (each file ticked
 with the commit reviewed), problems found are issues labelled
-`review-finding`, and the stable 0.1.0 (milestone `0.1.0`) comes out when the
-review is complete. The README states this in "How moodlesh is built": keep
+`review-finding`, and the first release, 0.1.0 (milestone `0.1.0`), comes out
+when the review is complete. The README states this in "How moodlesh is built": keep
 that section accurate.
 
+- Nothing is released yet: the version is `0.1.0.dev0` (in `pyproject.toml`
+  and `moodlesh/__init__.py`). Never create tags, GitHub releases or PyPI
+  uploads unless the maintainer asks; the README says "in development, not
+  released yet".
 - Changes reach `main` only through pull requests the maintainer reviews
   (branches `feat/...`, `fix/...`, `docs/...`; squash merge).
 - Commits written with AI help end with a `Co-Authored-By:` trailer; say in
