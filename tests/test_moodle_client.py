@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from moodlesh.core.errors import BackendError, InvalidOperationError
+from moodlesh.core.errors import BackendError, InvalidOperationError, PartialChangeError
 from moodlesh.memory import demo_backend
 from moodlesh.moodle.client import MoodleBackend
 from moodlesh.moodle.state import build_course
@@ -218,3 +218,38 @@ def test_ambiguous_new_subsection_is_not_renamed(client: MoodleBackend, moodle: 
     with pytest.raises(BackendError, match=r"subsection was created.*'Problems' was not applied"):
         client.add_subsection(101, dynamics.id, 2, name="Problems")
     assert not moodle.called("core_update_inplace_editable")
+
+
+def _fail_rename(monkeypatch: pytest.MonkeyPatch, moodle: FakeMoodle) -> None:
+    def refuse(**_: object) -> None:
+        raise BackendError("connection lost", function="core_update_inplace_editable")
+
+    monkeypatch.setattr(moodle, "_core_update_inplace_editable", refuse)
+
+
+def test_section_created_but_not_named_is_reported_as_partial(
+    client: MoodleBackend, moodle: FakeMoodle, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fail_rename(monkeypatch, moodle)
+    with pytest.raises(PartialChangeError, match="could not be named 'Optics'") as caught:
+        client.add_section(101, 2, "Optics")
+    created = caught.value.created
+    assert created is not None
+    assert moodle.db.get_course(101).sections[2].id == created.id  # it exists in Moodle
+
+
+def test_subsection_created_but_not_named_is_reported_as_partial(
+    client: MoodleBackend, moodle: FakeMoodle, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fail_rename(monkeypatch, moodle)
+    dynamics = moodle.db.get_course(101).sections[2]
+    with pytest.raises(PartialChangeError, match="subsection was created") as caught:
+        client.add_subsection(101, dynamics.id, name="Problems")
+    assert caught.value.created is not None
+
+
+def test_unidentified_new_section_is_a_partial_change(client: MoodleBackend, moodle: FakeMoodle) -> None:
+    moodle.concurrent_change = lambda db: db.add_section(101)
+    with pytest.raises(PartialChangeError) as caught:
+        client.add_section(101, None, "Optics")
+    assert caught.value.created is None

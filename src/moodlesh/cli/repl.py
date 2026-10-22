@@ -26,7 +26,7 @@ def report_error(console: Console, exc: MoodleshError) -> None:
         return
     cause = exc.cause if isinstance(exc, ScriptError) else exc
     console.print(Text(f"error: {exc}", style="bold red"))
-    if isinstance(cause, AuthenticationError):
+    if isinstance(cause, AuthenticationError) or isinstance(cause.__cause__, AuthenticationError):
         console.print(Text("hint: run `moodlesh login` again", style="yellow"))
 
 

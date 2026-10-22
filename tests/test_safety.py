@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from moodlesh.cli.interpreter import Interpreter
-from moodlesh.core.errors import BackendError, InvalidOperationError
+from moodlesh.core.errors import BackendError, InvalidOperationError, PartialChangeError
 from moodlesh.dryrun import DryRunBackend
 from moodlesh.journal import Journal, JournalingBackend
 from moodlesh.memory import InMemoryBackend
@@ -87,3 +87,36 @@ def test_journaling_backend_forwards_preflight(tmp_path: Path) -> None:
     journaled = JournalingBackend(MoodleBackend(moodle), Journal(tmp_path / "j.jsonl", "x"))
     with pytest.raises(BackendError, match="cannot edit"):
         journaled.check_writable(101)
+
+
+def test_journal_records_a_partial_change_with_what_was_created(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    moodle = FakeMoodle()
+
+    def refuse(**_: object) -> None:
+        raise BackendError("connection lost")
+
+    monkeypatch.setattr(moodle, "_core_update_inplace_editable", refuse)
+    path = tmp_path / "changes.jsonl"
+    journaled = JournalingBackend(MoodleBackend(moodle), Journal(path, "x"))
+    with pytest.raises(PartialChangeError):
+        journaled.add_section(101, 2, "Optics")
+
+    [entry] = (json.loads(line) for line in path.read_text().splitlines())
+    created = moodle.db.get_course(101).sections[2]
+    assert entry["ok"] is False
+    assert entry["partial"] is True
+    assert entry["result"] == {"section_id": created.id, "number": 2}
+    assert "could not be named 'Optics'" in entry["error"]
+
+
+def test_journal_partial_change_without_identified_item(tmp_path: Path) -> None:
+    moodle = FakeMoodle(concurrent_change=lambda db: db.add_section(101))
+    path = tmp_path / "changes.jsonl"
+    journaled = JournalingBackend(MoodleBackend(moodle), Journal(path, "x"))
+    with pytest.raises(PartialChangeError):
+        journaled.add_section(101, None, "Optics")
+    [entry] = (json.loads(line) for line in path.read_text().splitlines())
+    assert entry["partial"] is True
+    assert entry["result"] is None

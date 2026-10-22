@@ -281,6 +281,11 @@ Every change sent to Moodle, successful or not, is appended to
 {"time": "2026-10-20T15:45:31+02:00", "site": "https://moodle.example.org", "action": "add_section", "course": 3, "args": {"position": 1, "name": "Practice"}, "ok": true, "result": {"section_id": 14, "number": 1}}
 ```
 
+If an operation stops after it has already changed Moodle, for example a
+section created but not named because the connection dropped, moodlesh says so
+and the entry has `"partial": true`, with the section that now exists in
+`result`.
+
 ## Ways to connect
 
 | Transport | When to use it | How |

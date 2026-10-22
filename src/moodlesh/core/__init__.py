@@ -7,6 +7,7 @@ from moodlesh.core.errors import (
     InvalidOperationError,
     MoodleshError,
     NotFoundError,
+    PartialChangeError,
 )
 from moodlesh.core.models import Activity, Course, CourseSummary, Section, SectionItem, Subsection
 
@@ -20,6 +21,7 @@ __all__ = [
     "InvalidOperationError",
     "MoodleshError",
     "NotFoundError",
+    "PartialChangeError",
     "Section",
     "SectionItem",
     "Subsection",

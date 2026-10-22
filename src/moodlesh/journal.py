@@ -9,6 +9,10 @@ Example entry::
     {"time": "2026-10-20T15:42:07+02:00", "site": "https://moodle.example.org",
      "action": "add_section", "course": 2, "args": {"position": 2, "name": "Optics"},
      "ok": true, "result": {"section_id": 57, "number": 2}}
+
+When an operation stops after it has already changed Moodle (a section created
+but not named), the entry has `"ok": false, "partial": true`, and `result`
+describes what now exists in Moodle (or is `null` if it cannot be identified).
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from moodlesh.core.backend import CourseBackend
+from moodlesh.core.errors import PartialChangeError
 from moodlesh.core.models import Course, CourseSummary, Section
 
 T = TypeVar("T")
@@ -98,9 +103,18 @@ class JournalingBackend:
     def _recorded(self, action: str, course_id: int, args: dict[str, Any], write: Callable[[], T]) -> T:
         try:
             result = write()
+        except PartialChangeError as exc:
+            # Stopped half-way: Moodle *was* changed, so say what now exists.
+            self._journal.record(
+                action, course_id, args, ok=False, partial=True, result=_details(exc.created), error=str(exc)
+            )
+            raise
         except Exception as exc:
             self._journal.record(action, course_id, args, ok=False, error=str(exc))
             raise
-        details = {"section_id": result.id, "number": result.number} if isinstance(result, Section) else None
-        self._journal.record(action, course_id, args, ok=True, result=details)
+        self._journal.record(action, course_id, args, ok=True, result=_details(result))
         return result
+
+
+def _details(result: object) -> dict[str, int] | None:
+    return {"section_id": result.id, "number": result.number} if isinstance(result, Section) else None
