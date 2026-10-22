@@ -165,3 +165,56 @@ def test_empty_names_are_rejected_before_any_call(client: MoodleBackend, moodle:
     with pytest.raises(InvalidOperationError):
         client.add_section(101, name="   ")
     assert not moodle.calls
+
+
+# --------------------------------------------------------------------------- #
+# Someone else changes the course while moodlesh creates something (issue: the
+# new item must still be identified correctly, or not at all).
+# --------------------------------------------------------------------------- #
+def _names(moodle: FakeMoodle, course_id: int = 101) -> list[str]:
+    return [s.name for s in moodle.db.get_course(course_id).sections]
+
+
+def test_new_section_is_found_when_another_is_added_elsewhere(
+    client: MoodleBackend, moodle: FakeMoodle
+) -> None:
+    moodle.concurrent_change = lambda db: db.add_section(101, None, "Someone else's")
+    created = client.add_section(101, 2, "Optics")
+    assert created.name == "Optics"
+    assert _names(moodle) == ["General", "Kinematics", "Optics", "Dynamics", "Someone else's"]
+
+
+@pytest.mark.parametrize(
+    ("position", "theirs"),
+    [
+        (None, None),  # both appended at the end
+        (2, 2),  # both inserted at the same place
+    ],
+)
+def test_ambiguous_new_section_is_not_renamed(
+    client: MoodleBackend, moodle: FakeMoodle, position: int | None, theirs: int | None
+) -> None:
+    moodle.concurrent_change = lambda db: db.add_section(101, theirs)
+    with pytest.raises(BackendError, match=r"was created in course 101.*the name 'Optics' was not applied"):
+        client.add_section(101, position, "Optics")
+    assert not moodle.called("core_update_inplace_editable")
+    assert "Optics" not in _names(moodle)
+
+
+def test_new_subsection_is_found_when_another_is_added_elsewhere(
+    client: MoodleBackend, moodle: FakeMoodle
+) -> None:
+    dynamics = moodle.db.get_course(101).sections[2]
+    moodle.concurrent_change = lambda db: db.add_subsection(101, dynamics.id, 1, "Someone else's")
+    created = client.add_subsection(101, dynamics.id, name="Problems")
+    assert created.name == "Problems"
+    after = moodle.db.get_course(101).sections[2]
+    assert [s.name for s in after.subsections] == ["Someone else's", "Extras", "Problems"]
+
+
+def test_ambiguous_new_subsection_is_not_renamed(client: MoodleBackend, moodle: FakeMoodle) -> None:
+    dynamics = moodle.db.get_course(101).sections[2]
+    moodle.concurrent_change = lambda db: db.add_subsection(101, dynamics.id, 2)
+    with pytest.raises(BackendError, match=r"subsection was created.*'Problems' was not applied"):
+        client.add_subsection(101, dynamics.id, 2, name="Problems")
+    assert not moodle.called("core_update_inplace_editable")
