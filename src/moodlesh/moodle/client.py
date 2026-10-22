@@ -21,12 +21,12 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from moodlesh.core.backend import item_insertion_before, section_insertion_target
 from moodlesh.core.errors import BackendError, InvalidOperationError, NotFoundError
-from moodlesh.core.models import Course, CourseSummary, Section
+from moodlesh.core.models import Course, CourseSummary, Section, Subsection
 from moodlesh.moodle.state import build_course
 from moodlesh.moodle.transport import Transport
 
@@ -107,13 +107,20 @@ class MoodleBackend:
         course = self.get_course(course_id)
         target = section_insertion_target(course, position)
         existing = {s.id for s in course.sections}
+        # Moodle inserts the new section right after `anchor`: the target, or the
+        # last section when appending.
+        anchor = target.id if target is not None else course.sections[-1].id if course.sections else None
 
         args: dict[str, Any] = {"action": "section_add", "courseid": course_id}
         if target is not None:
             args["targetsectionid"] = target.id
         self._transport.call("core_courseformat_update_course", args)
 
-        created = _single_new(self.get_course(course_id).sections, existing, "section")
+        sections = self.get_course(course_id).sections
+        new_id = _identify_new([s.id for s in sections], existing, after=anchor)
+        if new_id is None:
+            raise _unidentified("section", course_id, [s for s in sections if s.id not in existing], name)
+        created = next(s for s in sections if s.id == new_id)
         return self._apply_name(course_id, created, name)
 
     def add_subsection(
@@ -130,17 +137,26 @@ class MoodleBackend:
             raise NotFoundError(f"section {parent_section_id} does not exist in course {course_id}")
         before_cmid = item_insertion_before(parent, position)
         self.check_writable(course_id, needs_rename=name is not None)
-        existing = {sub.cmid for sub in parent.subsections}
+        existing = {item.cmid for item in parent.items}
+        # Moodle puts the new module right before `before_cmid`, or after the
+        # last item when appending.
+        last = parent.items[-1].cmid if parent.items else None
 
         self._create_subsection_module(course_id, parent, before_cmid)
 
         refreshed = self.get_course(course_id).find_section(parent_section_id)
         if refreshed is None:  # pragma: no cover - the section does not vanish while creating
             raise NotFoundError(f"section {parent_section_id} no longer exists")
-        new_subs = [sub for sub in refreshed.subsections if sub.cmid not in existing]
-        if len(new_subs) != 1:
-            raise BackendError(f"expected 1 new subsection, found {len(new_subs)}")
-        return self._apply_name(course_id, new_subs[0].section, name)
+        keys = [item.cmid for item in refreshed.items]
+        if before_cmid is not None:
+            new_cmid = _identify_new(keys, existing, before=before_cmid)
+        else:
+            new_cmid = _identify_new(keys, existing, after=last)
+        created = next((i for i in refreshed.items if i.cmid == new_cmid), None)
+        if not isinstance(created, Subsection):
+            new_items = [i.section for i in refreshed.subsections if i.cmid not in existing]
+            raise _unidentified("subsection", course_id, new_items, name)
+        return self._apply_name(course_id, created.section, name)
 
     def _create_subsection_module(self, course_id: int, parent: Section, before_cmid: int | None) -> None:
         args: dict[str, Any] = {"courseid": course_id, "modname": SUBSECTION_MODNAME}
@@ -201,8 +217,40 @@ def _summary_from(raw: Mapping[str, Any]) -> CourseSummary:
     )
 
 
-def _single_new(sections: Iterable[Section], existing: set[int], what: str) -> Section:
-    new = [s for s in sections if s.id not in existing]
-    if len(new) != 1:
-        raise BackendError(f"expected 1 new {what}, found {len(new)}")
-    return new[0]
+def _identify_new(
+    keys: Sequence[int], existing: set[int], *, after: int | None = None, before: int | None = None
+) -> int | None:
+    """Find the item just created among `keys` (ids in course order), or `None` if unsure.
+
+    Moodle does not say which item it created, so it is found by comparing with
+    the ids that `existing` had before. If the course changed at the same time
+    (someone else added an item), several ids are new: the one created by
+    moodlesh is then the only new item next to where it was inserted (right
+    after `after`, or right before `before`). If several new items are there,
+    there is no way to tell them apart and `None` is returned.
+    """
+    new = [k for k in keys if k not in existing]
+    if len(new) == 1:
+        return new[0]
+    anchor = before if before is not None else after
+    if anchor is None or anchor not in keys:
+        return None
+    step = -1 if before is not None else 1
+    run: list[int] = []
+    index = keys.index(anchor) + step
+    while 0 <= index < len(keys) and keys[index] not in existing:
+        run.append(keys[index])
+        index += step
+    return run[0] if len(run) == 1 else None
+
+
+def _unidentified(what: str, course_id: int, candidates: Sequence[Section], name: str | None) -> BackendError:
+    """The error for a creation that succeeded but cannot be told apart from other changes."""
+    if not candidates:
+        return BackendError(f"Moodle reported success, but no new {what} was found in course {course_id}")
+    listed = ", ".join(f"'{s.name}' (id {s.id})" for s in candidates)
+    unnamed = f"; the name '{name}' was not applied" if name is not None else ""
+    return BackendError(
+        f"a {what} was created in course {course_id}, but the course changed at the same time and it "
+        f"cannot be told apart from the other new ones: {listed}{unnamed}. Check the course in Moodle."
+    )

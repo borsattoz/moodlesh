@@ -7,6 +7,13 @@ change behaviour).
 
 ## [Unreleased]
 
+### Fixed
+
+- Creating a section or subsection while someone else changes the same course
+  no longer fails after the creation with an unclear error: the new item is
+  recognised by where it was inserted, and if that is not possible moodlesh
+  stops with a message saying that the item was created but not named.
+
 ## [0.1.0a1] - first public alpha
 
 ### Added

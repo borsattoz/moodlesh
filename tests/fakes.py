@@ -8,7 +8,7 @@ the client tests also cover the state conversion.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -25,6 +25,8 @@ class FakeMoodle:
     legacy_45: bool = False  # simulates a 4.5 without core_courseformat_new_module
     include_format_in_search: bool = False
     not_editable: set[int] = field(default_factory=set)  # courses the user can see but not edit
+    # Called right after each creation: simulates someone else changing the course meanwhile.
+    concurrent_change: Callable[[InMemoryBackend], None] | None = None
     calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
 
     def call(self, function: str, args: Mapping[str, Any]) -> Any:
@@ -78,6 +80,7 @@ class FakeMoodle:
         else:
             target = self._section(courseid, targetsectionid)
             self.db.add_section(courseid, target.number + 1)  # Moodle inserts *after* the given section
+        self._concurrent()
         return "[]"
 
     def _core_courseformat_new_module(
@@ -113,7 +116,13 @@ class FakeMoodle:
         if targetcmid is not None:
             position = [i.cmid for i in section.items].index(targetcmid) + 1
         self.db.add_subsection(courseid, section.id, position)
+        self._concurrent()
         return "[]"
+
+    def _concurrent(self) -> None:
+        if self.concurrent_change is not None:
+            change, self.concurrent_change = self.concurrent_change, None  # only once
+            change(self.db)
 
     def _section(self, course_id: int, section_id: int) -> Section:
         section = self.db.get_course(course_id).find_section(section_id)
