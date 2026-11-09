@@ -59,7 +59,8 @@ from moodlesh.moodle import (
     login_with_password,
     verify_session,
 )
-from moodlesh.moodle.auth import default_state_dir, require_secure_for_password
+from moodlesh.moodle.auth import default_state_dir
+from moodlesh.moodle.transport import require_secure_connection
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -226,7 +227,7 @@ def _login(args: argparse.Namespace, console: Console) -> int:
     url = _require_url(args)
     store = SessionStore()
     if args.password:
-        require_secure_for_password(url)  # before asking for the password, not after
+        require_secure_connection(url, "a password")  # before asking for the password, not after
         username = args.username or input("username: ")
         store.save(url, login_with_password(url, username, getpass.getpass("password: ")))
     else:

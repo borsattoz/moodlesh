@@ -22,16 +22,13 @@ from urllib.parse import urlsplit
 import httpx
 
 from moodlesh.core.errors import AuthenticationError, BackendError
+from moodlesh.moodle.transport import require_secure_connection
 
 _LOGINTOKEN_RE = re.compile(r'name="logintoken"\s+value="([^"]*)"')
 
 # Paths of Moodle (and of SSO service providers installed on the same host) that
 # authentication redirects go through: being there does not mean being logged in.
 _AUTH_PATH_PREFIXES = ("/login/", "/auth/", "/Shibboleth.sso/", "/shibboleth-ds/", "/simplesaml/", "/saml/")
-
-# Hosts where a password may be sent over plain HTTP: the traffic never leaves
-# the computer (local test sites).
-_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 RawCookie = dict[str, Any]
 
@@ -117,7 +114,7 @@ def login_with_password(
             authenticated session. The message says which.
     """
     base_url = base_url.rstrip("/")
-    require_secure_for_password(base_url)
+    require_secure_connection(base_url, "a password")
     http = client or httpx.Client(follow_redirects=True, timeout=30)
     try:
         return _login(http, base_url, username, password)
@@ -176,27 +173,6 @@ def _looks_blocked(response: httpx.Response) -> bool:
     """True for the answer of a bot check (such as Cloudflare's) rather than of Moodle."""
     return "cf-mitigated" in response.headers or (
         response.status_code in {403, 429} and "logintoken" not in response.text
-    )
-
-
-def require_secure_for_password(base_url: str) -> None:
-    """Refuse to send a password to `base_url` unless the connection is encrypted.
-
-    Plain HTTP is accepted only for local test sites (`localhost`, `127.0.0.1`,
-    `::1`), whose traffic never leaves the computer.
-
-    Raises:
-        AuthenticationError: the password would travel in clear text.
-    """
-    parts = urlsplit(base_url)
-    if parts.scheme == "https":
-        return
-    host = parts.hostname or ""
-    if parts.scheme == "http" and (host in _LOCAL_HOSTS or host.endswith(".localhost")):
-        return
-    raise AuthenticationError(
-        f"refusing to send a password to {base_url}: the connection is not encrypted. "
-        "Use the https:// address of the site (plain http:// is accepted only for local test sites)."
     )
 
 

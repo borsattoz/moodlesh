@@ -51,6 +51,8 @@ Nothing has been released yet. This section describes what the first release,
   refuses to send a password over an unencrypted `http://` connection, except
   to local test sites (`localhost`, `127.0.0.1`, `::1`). The check happens
   before the password is asked for.
+- The same applies to web service tokens: the REST transport refuses to send a
+  token over `http://`, except to local test sites.
 - `moodlesh login --password` checks that Moodle recognises the session
   before saving it, instead of guessing from where it was redirected. A
   session left half-way by multi-factor authentication is no longer saved,
