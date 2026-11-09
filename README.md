@@ -390,6 +390,12 @@ findings are fixed (milestone
 [0.1.0](https://github.com/borsattoz/moodlesh/milestones)). New changes reach
 the code only through reviewed pull requests.
 
+Progress: phase 1 of 6 is done. It covers the code that writes to Moodle and
+handles credentials (`core/`, `moodle/client.py`, `moodle/auth.py`,
+`dryrun.py` and `journal.py`); the five problems found there have been fixed.
+Next is the code that talks to Moodle (`moodle/transport.py`,
+`moodle/browser.py`, `moodle/state.py`).
+
 What has been checked so far:
 
 - unit tests, run on every change by continuous integration on Python
