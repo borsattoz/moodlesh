@@ -7,7 +7,12 @@ import httpx
 import pytest
 
 from moodlesh.core.errors import AuthenticationError, BackendError
-from moodlesh.moodle.transport import AjaxSessionTransport, RestTransport, flatten_params
+from moodlesh.moodle.transport import (
+    AjaxSessionTransport,
+    NotMoodleResponseError,
+    RestTransport,
+    flatten_params,
+)
 
 BASE = "https://moodle.example.org"
 
@@ -159,3 +164,10 @@ def test_rest_accepts_encrypted_or_local_sites(url: str) -> None:
 def test_rest_refuses_to_send_the_token_in_clear_text(url: str) -> None:
     with pytest.raises(AuthenticationError, match="refusing to send a web service token"):
         RestTransport(url, "tok", client=httpx.Client())
+
+
+def test_rest_tells_a_bot_check_apart_from_disabled_web_services() -> None:
+    page = "<html><head><title>Security Check</title></head></html>"
+    blocked = httpx.MockTransport(lambda _: httpx.Response(403, text=page))
+    with pytest.raises(NotMoodleResponseError, match="Security Check"):
+        rest(blocked).call("f", {})

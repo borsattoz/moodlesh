@@ -28,6 +28,7 @@ from moodlesh.core.errors import AuthenticationError, BackendError
 from moodlesh.moodle.auth import RawCookie, SessionStore, is_moodle_page
 from moodlesh.moodle.transport import (
     NotMoodleResponseError,
+    Transport,
     ajax_request_body,
     decode_ajax_response,
 )
@@ -60,7 +61,7 @@ _JS_FETCH = """async ({url, body}) => {
 }"""
 
 
-class BrowserTransport:
+class BrowserTransport(Transport):
     """`Transport` implementation that uses a Chromium window.
 
     On opening it makes sure the page is an authenticated Moodle page, waiting

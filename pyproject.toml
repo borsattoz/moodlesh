@@ -51,8 +51,8 @@ dev = [
 packages = ["src/moodlesh"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-ra"
+testpaths = ["tests", "src"]
+addopts = "-ra --doctest-modules"
 # tests/integration runs only when MOODLESH_IT_URL points to a disposable Moodle site
 
 [tool.ruff]

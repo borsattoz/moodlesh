@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from abc import abstractmethod
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any, Protocol
@@ -64,12 +65,32 @@ def require_secure_connection(base_url: str, credential: str) -> None:
 
 
 class Transport(Protocol):
-    """Call a Moodle external function and return its result."""
+    """Call a Moodle external function and return its result.
 
+    Every transport must behave the same way, because `MoodleBackend`, the
+    shell and the change journal rely on it (`tests/test_transport_contract.py`
+    checks it for all of them):
+
+    - an error returned by Moodle raises `BackendError`, with Moodle's
+      `errorcode`, and the call is **never retried**: it may have been a write;
+    - an invalid session or token raises `AuthenticationError`;
+    - a response that does not come from Moodle (an HTML page, a bot check)
+      raises `NotMoodleResponseError`;
+    - a network or browser failure raises `BackendError`, never an httpx or
+      Playwright exception;
+    - only problems that guarantee Moodle did not run the function may be
+      retried, once: an invalid sesskey (Moodle checks it before running the
+      function) or, in the browser, a response that is not from Moodle.
+
+    The transports of this package inherit this class explicitly; others (such
+    as the fake Moodle of the tests) may simply have a matching `call`.
+    """
+
+    @abstractmethod
     def call(self, function: str, args: Mapping[str, Any]) -> Any: ...
 
 
-class AjaxSessionTransport:
+class AjaxSessionTransport(Transport):
     """Transport based on the browser session (`MoodleSession` cookie)."""
 
     def __init__(
@@ -159,7 +180,7 @@ class NotMoodleResponseError(AuthenticationError):
     """The response is not from Moodle: typically a login page or an anti-bot check."""
 
 
-class RestTransport:
+class RestTransport(Transport):
     """Transport based on the REST web services, with a token."""
 
     def __init__(
@@ -188,11 +209,19 @@ class RestTransport:
         }
         with _network_errors(function):
             response = self._client.post(self._url, data=data)
-        if response.status_code == httpx.codes.FORBIDDEN:
+        status, text = response.status_code, response.text
+        # Moodle answers an empty 403 when web services or REST are disabled; a
+        # 403 with a page in it is something else (typically a bot check).
+        if status == httpx.codes.FORBIDDEN and not text.strip():
             raise BackendError("web services or REST protocol disabled (HTTP 403)", function=function)
-        if response.status_code != httpx.codes.OK:
-            raise BackendError(f"HTTP {response.status_code}", function=function)
-        payload = response.json()
+        try:
+            payload = json.loads(text)
+        except ValueError:
+            raise NotMoodleResponseError(
+                f'non-JSON response (HTTP {status}, title "{_page_title(text)}")', function=function
+            ) from None
+        if status != httpx.codes.OK:
+            raise BackendError(f"HTTP {status}", function=function)
         if isinstance(payload, dict) and "exception" in payload:
             _raise_error(function, payload, _REST_AUTH_ERRORS)
         return payload

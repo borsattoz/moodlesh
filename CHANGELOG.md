@@ -45,6 +45,13 @@ Nothing has been released yet. This section describes what the first release,
   abstract and every backend inherits it explicitly, so a safety layer that
   forgets an operation fails type checking and cannot be created.
 
+- The behaviour every transport must follow (which errors it raises, and
+  that a call is never retried after an error returned by Moodle) is written
+  in `Transport` and checked by the same tests for the AJAX, REST and browser
+  transports. The REST transport now reports a page that does not come from
+  Moodle (such as a bot check) as such, instead of failing with a generic
+  error or calling it "web services disabled".
+
 ### Security
 
 - `moodlesh login --password` (and `login_with_password` in the library)

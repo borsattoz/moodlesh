@@ -30,7 +30,10 @@ special cases.
   created a section, then failed to rename it.)
 - **Never retry an error returned by Moodle**: it may come from a write. Only
   transport problems are retried, once: invalid sesskey, a non-JSON response
-  (login page or bot check), a Playwright error (`_Config.page_error`).
+  (login page or bot check), a Playwright error (`_Config.page_error`). The
+  full contract of a transport is in the docstring of `Transport`;
+  `tests/test_transport_contract.py` runs the same situations through every
+  transport, so a new transport must be added there.
 - **Never bypass bot protection** (no TLS spoofing, no copying `cf_clearance`
   into httpx, no headless tricks). The browser transport sends requests with
   `fetch` from a real, visible Chromium window; the user passes any check.
