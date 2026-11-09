@@ -51,6 +51,11 @@ Nothing has been released yet. This section describes what the first release,
   transports. The REST transport now reports a page that does not come from
   Moodle (such as a bot check) as such, instead of failing with a generic
   error or calling it "web services disabled".
+- REST's "Access control exception" is no longer presented as a login
+  problem: Moodle uses it for many site settings (token expired, service or
+  function not enabled, missing capability, IP restriction), so moodlesh lists
+  the possible causes, suggests asking the site administrator, and shows
+  Moodle's reason when the site sends it.
 
 ### Security
 

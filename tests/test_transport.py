@@ -171,3 +171,34 @@ def test_rest_tells_a_bot_check_apart_from_disabled_web_services() -> None:
     blocked = httpx.MockTransport(lambda _: httpx.Response(403, text=page))
     with pytest.raises(NotMoodleResponseError, match="Security Check"):
         rest(blocked).call("f", {})
+
+
+def _rest_answering(payload: dict[str, str]) -> RestTransport:
+    return rest(httpx.MockTransport(lambda _: httpx.Response(200, json=payload)))
+
+
+def test_rest_access_exception_is_not_reported_as_a_login_problem() -> None:
+    denied = {"exception": "webservice_access_exception", "errorcode": "accessexception", "message": "x"}
+    with pytest.raises(BackendError, match="site administrator") as caught:
+        _rest_answering(denied).call("f", {})
+    assert not isinstance(caught.value, AuthenticationError)
+    assert caught.value.errorcode == "accessexception"
+
+
+def test_rest_access_exception_shows_moodle_s_reason_when_given() -> None:
+    denied = {
+        "exception": "webservice_access_exception",
+        "errorcode": "accessexception",
+        "message": "Access control exception",
+        "debuginfo": "Access to the function core_course_get_courses() is not allowed.\n   There could be",
+    }
+    with pytest.raises(
+        BackendError, match=r"Moodle says: Access to the function core_course_get_courses\(\)"
+    ):
+        _rest_answering(denied).call("f", {})
+
+
+def test_rest_invalid_token_is_still_an_authentication_error() -> None:
+    invalid = {"exception": "moodle_exception", "errorcode": "invalidtoken", "message": "Invalid token"}
+    with pytest.raises(AuthenticationError):
+        _rest_answering(invalid).call("f", {})

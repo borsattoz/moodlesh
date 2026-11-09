@@ -35,7 +35,13 @@ _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 # Errors meaning "the session is not valid". Note that `requireloginerror` is *not*
 # one of them: inside a function it means "this course is not accessible to you".
 _AJAX_AUTH_ERRORS = frozenset({"invalidsesskey", "servicerequireslogin"})
-_REST_AUTH_ERRORS = frozenset({"invalidtoken", "accessexception"})
+_REST_AUTH_ERRORS = frozenset({"invalidtoken"})
+# Moodle raises "Access control exception" for many unrelated reasons (checked in
+# webservice/lib.php, 4.5); the actual one is only in `debuginfo`, sent in debug mode.
+_ACCESS_EXCEPTION_CAUSES = (
+    "an expired token, web services or the service disabled, the function not included in the "
+    "token's service, a missing capability, or an IP address restriction"
+)
 
 
 # Hosts where credentials may be sent over plain HTTP: the traffic never leaves
@@ -223,6 +229,8 @@ class RestTransport(Transport):
         if status != httpx.codes.OK:
             raise BackendError(f"HTTP {status}", function=function)
         if isinstance(payload, dict) and "exception" in payload:
+            if payload.get("errorcode") == "accessexception":
+                raise _access_denied(function, payload)
             _raise_error(function, payload, _REST_AUTH_ERRORS)
         return payload
 
@@ -264,6 +272,18 @@ def _network_errors(function: str) -> Iterator[None]:
 def _page_title(html: str) -> str:
     match = _TITLE_RE.search(html)
     return " ".join(match.group(1).split())[:80] if match else ""
+
+
+def _access_denied(function: str, error: Mapping[str, Any]) -> BackendError:
+    """The error for REST's `accessexception`: not a login problem, a site setting."""
+    reason = error.get("debuginfo")
+    detail = f" Moodle says: {' '.join(str(reason).split())}" if reason else ""
+    return BackendError(
+        f"the site does not allow this web service call. Possible causes: {_ACCESS_EXCEPTION_CAUSES}. "
+        f"Ask the site administrator to check the token and the web service settings.{detail}",
+        function=function,
+        errorcode="accessexception",
+    )
 
 
 def _raise_error(function: str, error: Mapping[str, Any], auth_codes: frozenset[str]) -> None:
