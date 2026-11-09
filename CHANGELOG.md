@@ -51,6 +51,11 @@ Nothing has been released yet. This section describes what the first release,
   refuses to send a password over an unencrypted `http://` connection, except
   to local test sites (`localhost`, `127.0.0.1`, `::1`). The check happens
   before the password is asked for.
+- `moodlesh login --password` checks that Moodle recognises the session
+  before saving it, instead of guessing from where it was redirected. A
+  session left half-way by multi-factor authentication is no longer saved,
+  and failures say what happened: wrong credentials, a bot check, MFA, a
+  required password change, or an unreachable site.
 
 ### Compatibility
 

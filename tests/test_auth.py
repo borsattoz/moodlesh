@@ -130,10 +130,23 @@ def test_session_store_tightens_existing_file(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------- #
 # login_with_password
 # --------------------------------------------------------------------------- #
-class _FakeLoginSite:
-    """A Moodle login form that accepts one username and password."""
+_DASHBOARD = '<script>M.cfg = {"sesskey":"k","userId":5}</script>'
+_LOGIN_FORM = '<form><input name="logintoken" value="tok"></form>'
 
-    def __init__(self) -> None:
+
+class _FakeLoginSite:
+    """A Moodle login form that accepts one username and password.
+
+    `after_login` is where Moodle sends the user after a correct password
+    (normally the dashboard); `dashboard` is what `/my/` then shows.
+    """
+
+    def __init__(
+        self, *, after_login: str = "/my/", dashboard: str = _DASHBOARD, login_page: str = _LOGIN_FORM
+    ) -> None:
+        self.after_login = after_login
+        self.dashboard = dashboard
+        self.login_page = login_page
         self.posted: list[dict[str, str]] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
@@ -141,11 +154,13 @@ class _FakeLoginSite:
             form = dict(httpx.QueryParams(request.content.decode()))
             self.posted.append(form)
             if form.get("password") == "right" and form.get("logintoken") == "tok":
-                return httpx.Response(303, headers={"Location": "/my/"}, request=request)
-            return httpx.Response(200, text="<p>Invalid login</p>", request=request)
+                return httpx.Response(303, headers={"Location": self.after_login}, request=request)
+            return httpx.Response(200, text=_LOGIN_FORM + "<p>Invalid login</p>", request=request)
         if request.url.path == "/my/":
-            return httpx.Response(200, text="dashboard", request=request)
-        return httpx.Response(200, text='<input name="logintoken" value="tok">', request=request)
+            return httpx.Response(200, text=self.dashboard, request=request)
+        if request.url.path == "/login/index.php":
+            return httpx.Response(200, text=self.login_page, request=request)
+        return httpx.Response(200, text="<p>some Moodle page</p>", request=request)
 
     def client(self) -> httpx.Client:
         return httpx.Client(transport=httpx.MockTransport(self.handler), follow_redirects=True)
@@ -187,3 +202,61 @@ def test_login_with_password_reports_wrong_credentials() -> None:
     site = _FakeLoginSite()
     with pytest.raises(AuthenticationError, match="login failed"):
         login_with_password(BASE, "alice", "wrong", client=site.client())
+
+
+def test_login_with_password_returns_an_authenticated_session() -> None:
+    site = _FakeLoginSite()
+    cookies = login_with_password(BASE, "alice", "right", client=site.client())
+    assert isinstance(cookies, httpx.Cookies)
+
+
+@pytest.mark.parametrize(
+    ("site", "message"),
+    [
+        # Multi-factor authentication: the password is right, but the session is not complete.
+        (_FakeLoginSite(after_login="/admin/tool/mfa/auth.php"), "multi-factor authentication"),
+        (_FakeLoginSite(after_login="/login/change_password.php"), "requires a password change"),
+        # Redirected somewhere unexpected, and Moodle does not recognise the session.
+        (
+            _FakeLoginSite(dashboard="<p>no session</p>"),
+            "password was accepted, but session not authenticated",
+        ),
+        (
+            _FakeLoginSite(dashboard='<script>M.cfg = {"sesskey":"k","userId":0}</script>'),
+            "password was accepted, but guest session",
+        ),
+        (_FakeLoginSite(login_page="<p>maintenance</p>"), "does not show Moodle's login form"),
+    ],
+)
+def test_login_with_password_says_why_it_failed(site: _FakeLoginSite, message: str) -> None:
+    with pytest.raises(AuthenticationError, match=message):
+        login_with_password(BASE, "alice", "right", client=site.client())
+
+
+def test_login_with_password_does_not_post_without_a_login_token() -> None:
+    site = _FakeLoginSite(login_page="<p>maintenance</p>")
+    with pytest.raises(AuthenticationError):
+        login_with_password(BASE, "alice", "right", client=site.client())
+    assert site.posted == []
+
+
+@pytest.mark.parametrize(
+    "blocked",
+    [
+        httpx.Response(403, headers={"cf-mitigated": "challenge"}, text="<title>Just a moment...</title>"),
+        httpx.Response(403, text="<title>Security Check</title>"),
+    ],
+)
+def test_login_with_password_recognises_bot_protection(blocked: httpx.Response) -> None:
+    client = httpx.Client(transport=httpx.MockTransport(lambda _: blocked), follow_redirects=True)
+    with pytest.raises(AuthenticationError, match=r"blocking automated access.*moodlesh login"):
+        login_with_password(BASE, "alice", "right", client=client)
+
+
+def test_login_with_password_reports_network_errors() -> None:
+    def unreachable(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("name not resolved", request=request)
+
+    client = httpx.Client(transport=httpx.MockTransport(unreachable))
+    with pytest.raises(AuthenticationError, match="cannot reach"):
+        login_with_password(BASE, "alice", "right", client=client)
