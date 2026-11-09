@@ -104,24 +104,79 @@ def login_with_password(
     *,
     client: httpx.Client | None = None,
 ) -> httpx.Cookies:
-    """Log in through the standard form and return the session cookies.
+    """Log in through the standard form and return the cookies of an authenticated session.
+
+    The outcome is not guessed from where Moodle redirects: after posting the
+    form, the session is checked with `verify_session`, the same check the HTTP
+    transport relies on.
 
     Raises:
         AuthenticationError: the address is not HTTPS (except for local test
-            sites), or the login failed.
+            sites), the site cannot be reached or is not answering as Moodle
+            (for example a bot check), or the login did not produce an
+            authenticated session. The message says which.
     """
     base_url = base_url.rstrip("/")
     require_secure_for_password(base_url)
     http = client or httpx.Client(follow_redirects=True, timeout=30)
+    try:
+        return _login(http, base_url, username, password)
+    except httpx.HTTPError as exc:
+        raise AuthenticationError(f"login failed: cannot reach {base_url}: {exc}") from exc
+    finally:
+        if client is None:
+            http.close()
+
+
+def _login(http: httpx.Client, base_url: str, username: str, password: str) -> httpx.Cookies:
     page = http.get(f"{base_url}/login/index.php")
+    if _looks_blocked(page):
+        raise AuthenticationError(_BLOCKED)
     match = _LOGINTOKEN_RE.search(page.text)
-    form = {"username": username, "password": password, "logintoken": match.group(1) if match else ""}
+    if match is None:
+        raise AuthenticationError(
+            f"login failed: {page.url} (HTTP {page.status_code}) does not show Moodle's login form"
+        )
+
+    form = {"username": username, "password": password, "logintoken": match.group(1)}
     response = http.post(f"{base_url}/login/index.php", data=form)
-    if "/login/" in str(response.url):
+    path = urlsplit(str(response.url)).path
+    if _looks_blocked(response):
+        raise AuthenticationError(_BLOCKED)
+    if "/admin/tool/mfa/" in path:
+        raise AuthenticationError(
+            "login failed: this account uses multi-factor authentication, which moodlesh cannot "
+            "complete without a browser. Use `moodlesh login` (browser) instead."
+        )
+    if path.endswith("/login/change_password.php"):
+        raise AuthenticationError(
+            "login failed: Moodle requires a password change for this account. "
+            "Change it in the browser, then try again."
+        )
+    if "/login/" in path:
         raise AuthenticationError(
             "login failed: wrong credentials, or the account does not use manual authentication"
         )
-    return http.cookies
+
+    cookies = httpx.Cookies(http.cookies)
+    try:
+        verify_session(base_url, cookies, client=http)
+    except AuthenticationError as exc:
+        raise AuthenticationError(f"login failed: the password was accepted, but {exc}") from exc
+    return cookies
+
+
+_BLOCKED = (
+    "login failed: the site is blocking automated access (for example a bot check). "
+    "Use `moodlesh login` (browser) instead."
+)
+
+
+def _looks_blocked(response: httpx.Response) -> bool:
+    """True for the answer of a bot check (such as Cloudflare's) rather than of Moodle."""
+    return "cf-mitigated" in response.headers or (
+        response.status_code in {403, 429} and "logintoken" not in response.text
+    )
 
 
 def require_secure_for_password(base_url: str) -> None:
