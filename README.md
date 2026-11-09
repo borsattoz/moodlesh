@@ -164,7 +164,10 @@ work, because requests to Moodle are sent from it. The session is saved, so
 later starts usually need no login.
 
 moodlesh does not bypass any login or security check. If the site shows one,
-you complete it yourself in the window.
+you complete it yourself in the window. Some sites' bot protection does not
+accept an automated browser even after you pass its check: on those sites the
+browser transport cannot work, and only the site administrator can make an
+exception.
 
 Other ways to start moodlesh:
 
@@ -293,9 +296,9 @@ and the entry has `"partial": true`, with the section that now exists in
 
 | Transport | When to use it | How |
 |---|---|---|
-| `browser` (default) | Any site, including sites with single sign-on or security checks | `moodlesh` |
-| `http` | Sites without security checks, if you prefer no browser window | `moodlesh login`, then `moodlesh --transport http` |
-| REST | You have a web service token | `MOODLESH_TOKEN=... moodlesh` |
+| `browser` (default) | Sites with single sign-on, and sites whose bot protection accepts an automated browser after you pass its check | `moodlesh` |
+| `http` | Sites without bot protection, if you prefer no browser window | `moodlesh login`, then `moodlesh --transport http` |
+| `rest` | You have a web service token | `MOODLESH_TOKEN=... moodlesh` (a token selects `rest` by itself) |
 
 With the browser transport, requests are sent from a Chromium window, the same
 way Moodle's own pages send them. `moodlesh login --password` logs in with a
@@ -309,7 +312,7 @@ always deletes the local copy.
 | Option | Variable | Meaning |
 |---|---|---|
 | `--url URL` | `MOODLESH_URL` | Moodle address |
-| `--transport browser\|http` | `MOODLESH_TRANSPORT` | how to talk to Moodle |
+| `--transport browser\|http\|rest` | `MOODLESH_TRANSPORT` | how to talk to Moodle |
 | `--token TOKEN` | `MOODLESH_TOKEN` | web service token (prefer the variable: command-line arguments are visible to other local users) |
 | `-n`, `--dry-run` | | simulate changes |
 | `--all-courses` | | list every visible course, not only editable ones |

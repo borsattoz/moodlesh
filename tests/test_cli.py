@@ -13,7 +13,7 @@ from rich.console import Console
 
 from moodlesh.cli.completion import DslCompleter
 from moodlesh.cli.interpreter import Interpreter
-from moodlesh.cli.main import EXIT_ERROR, EXIT_OK, EXIT_USAGE, main
+from moodlesh.cli.main import EXIT_ERROR, EXIT_OK, EXIT_USAGE, build_parser, main, transport_of
 from moodlesh.cli.repl import run_repl
 
 
@@ -94,3 +94,52 @@ def test_token_over_plain_http_is_refused(capsys: pytest.CaptureFixture[str]) ->
     code = main(["--url", "http://moodle.example.org", "--token", "tok", "exec", "ls"])
     assert code == EXIT_ERROR
     assert "refusing to send a web service token" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        ([], "browser"),
+        (["--token", "tok"], "rest"),
+        (["--transport", "http"], "http"),
+        (["--transport", "rest", "--token", "tok"], "rest"),
+    ],
+)
+def test_transport_choice(argv: list[str], expected: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("MOODLESH_TOKEN", raising=False)
+    monkeypatch.delenv("MOODLESH_TRANSPORT", raising=False)
+    assert transport_of(build_parser().parse_args(argv)) == expected
+
+
+@pytest.mark.parametrize(
+    ("argv", "message"),
+    [
+        (["--transport", "rest"], "needs a web service token"),
+        (["--transport", "browser", "--token", "tok"], "the browser transport does not use it"),
+        (["--transport", "http", "--token", "tok"], "the http transport does not use it"),
+    ],
+)
+def test_conflicting_transport_options_are_refused(
+    argv: list[str], message: str, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MOODLESH_TOKEN", raising=False)
+    monkeypatch.delenv("MOODLESH_TRANSPORT", raising=False)
+    assert main(["--url", "https://moodle.example.org", *argv, "exec", "ls"]) == EXIT_USAGE
+    assert message in capsys.readouterr().out
+
+
+def test_unknown_transport_from_the_environment_is_refused(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MOODLESH_TOKEN", raising=False)
+    monkeypatch.setenv("MOODLESH_TRANSPORT", "ftp")
+    assert main(["--url", "https://moodle.example.org", "exec", "ls"]) == EXIT_USAGE
+    assert "unknown transport 'ftp'" in capsys.readouterr().out
+
+
+def test_login_is_refused_with_a_token(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MOODLESH_TRANSPORT", raising=False)
+    assert main(["--url", "https://moodle.example.org", "--token", "tok", "login"]) == EXIT_USAGE
+    assert "no login is needed" in capsys.readouterr().out
