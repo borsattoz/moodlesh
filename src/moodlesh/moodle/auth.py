@@ -29,6 +29,10 @@ _LOGINTOKEN_RE = re.compile(r'name="logintoken"\s+value="([^"]*)"')
 # authentication redirects go through: being there does not mean being logged in.
 _AUTH_PATH_PREFIXES = ("/login/", "/auth/", "/Shibboleth.sso/", "/shibboleth-ds/", "/simplesaml/", "/saml/")
 
+# Hosts where a password may be sent over plain HTTP: the traffic never leaves
+# the computer (local test sites).
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
 RawCookie = dict[str, Any]
 
 
@@ -100,8 +104,14 @@ def login_with_password(
     *,
     client: httpx.Client | None = None,
 ) -> httpx.Cookies:
-    """Log in through the standard form and return the session cookies."""
+    """Log in through the standard form and return the session cookies.
+
+    Raises:
+        AuthenticationError: the address is not HTTPS (except for local test
+            sites), or the login failed.
+    """
     base_url = base_url.rstrip("/")
+    require_secure_for_password(base_url)
     http = client or httpx.Client(follow_redirects=True, timeout=30)
     page = http.get(f"{base_url}/login/index.php")
     match = _LOGINTOKEN_RE.search(page.text)
@@ -112,6 +122,27 @@ def login_with_password(
             "login failed: wrong credentials, or the account does not use manual authentication"
         )
     return http.cookies
+
+
+def require_secure_for_password(base_url: str) -> None:
+    """Refuse to send a password to `base_url` unless the connection is encrypted.
+
+    Plain HTTP is accepted only for local test sites (`localhost`, `127.0.0.1`,
+    `::1`), whose traffic never leaves the computer.
+
+    Raises:
+        AuthenticationError: the password would travel in clear text.
+    """
+    parts = urlsplit(base_url)
+    if parts.scheme == "https":
+        return
+    host = parts.hostname or ""
+    if parts.scheme == "http" and (host in _LOCAL_HOSTS or host.endswith(".localhost")):
+        return
+    raise AuthenticationError(
+        f"refusing to send a password to {base_url}: the connection is not encrypted. "
+        "Use the https:// address of the site (plain http:// is accepted only for local test sites)."
+    )
 
 
 def verify_session(base_url: str, cookies: httpx.Cookies, *, client: httpx.Client | None = None) -> None:

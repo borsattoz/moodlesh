@@ -75,3 +75,16 @@ def test_repl_session(interpreter: Interpreter) -> None:
     assert code == EXIT_OK
     assert "created section 2 'Optics'" in text
     assert "unknown option" in text
+
+
+def test_login_with_password_refuses_plain_http_before_asking_anything(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_prompt(*_: object) -> str:
+        raise AssertionError("the password must not be asked for")
+
+    monkeypatch.setattr("builtins.input", no_prompt)
+    monkeypatch.setattr("getpass.getpass", no_prompt)
+    code = main(["--url", "http://moodle.example.org", "login", "--password"])
+    assert code == EXIT_ERROR
+    assert "not encrypted" in capsys.readouterr().out

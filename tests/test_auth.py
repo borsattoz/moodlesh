@@ -6,7 +6,13 @@ import httpx
 import pytest
 
 from moodlesh.core.errors import AuthenticationError
-from moodlesh.moodle.auth import SessionStore, end_server_session, is_moodle_page, verify_session
+from moodlesh.moodle.auth import (
+    SessionStore,
+    end_server_session,
+    is_moodle_page,
+    login_with_password,
+    verify_session,
+)
 
 BASE = "https://moodle.example.org"
 
@@ -119,3 +125,65 @@ def test_session_store_tightens_existing_file(tmp_path: Path) -> None:
     path.chmod(0o644)
     store.save_raw(BASE, [])
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+# --------------------------------------------------------------------------- #
+# login_with_password
+# --------------------------------------------------------------------------- #
+class _FakeLoginSite:
+    """A Moodle login form that accepts one username and password."""
+
+    def __init__(self) -> None:
+        self.posted: list[dict[str, str]] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            form = dict(httpx.QueryParams(request.content.decode()))
+            self.posted.append(form)
+            if form.get("password") == "right" and form.get("logintoken") == "tok":
+                return httpx.Response(303, headers={"Location": "/my/"}, request=request)
+            return httpx.Response(200, text="<p>Invalid login</p>", request=request)
+        if request.url.path == "/my/":
+            return httpx.Response(200, text="dashboard", request=request)
+        return httpx.Response(200, text='<input name="logintoken" value="tok">', request=request)
+
+    def client(self) -> httpx.Client:
+        return httpx.Client(transport=httpx.MockTransport(self.handler), follow_redirects=True)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://moodle.example.org",
+        "http://localhost:8000",
+        "http://127.0.0.1:8045",
+        "http://[::1]:8000",
+        "http://moodle.localhost",
+    ],
+)
+def test_login_with_password_accepts_encrypted_or_local_sites(url: str) -> None:
+    site = _FakeLoginSite()
+    login_with_password(url, "alice", "right", client=site.client())
+    assert site.posted == [{"username": "alice", "password": "right", "logintoken": "tok"}]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://moodle.example.org",
+        "http://10.0.0.5",
+        "http://localhost.example.org",
+        "ftp://moodle.example.org",
+    ],
+)
+def test_login_with_password_refuses_to_send_a_password_in_clear_text(url: str) -> None:
+    site = _FakeLoginSite()
+    with pytest.raises(AuthenticationError, match="not encrypted"):
+        login_with_password(url, "alice", "right", client=site.client())
+    assert site.posted == []  # nothing was sent, not even the login page request
+
+
+def test_login_with_password_reports_wrong_credentials() -> None:
+    site = _FakeLoginSite()
+    with pytest.raises(AuthenticationError, match="login failed"):
+        login_with_password(BASE, "alice", "wrong", client=site.client())

@@ -45,6 +45,13 @@ Nothing has been released yet. This section describes what the first release,
   abstract and every backend inherits it explicitly, so a safety layer that
   forgets an operation fails type checking and cannot be created.
 
+### Security
+
+- `moodlesh login --password` (and `login_with_password` in the library)
+  refuses to send a password over an unencrypted `http://` connection, except
+  to local test sites (`localhost`, `127.0.0.1`, `::1`). The check happens
+  before the password is asked for.
+
 ### Compatibility
 
 - Tested on Moodle 4.5.15 and 5.1.8. Moodle 4.4 and older are not supported.
