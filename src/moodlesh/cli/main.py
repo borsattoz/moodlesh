@@ -16,12 +16,14 @@ for confirmation.
 How to talk to Moodle (--transport or MOODLESH_TRANSPORT):
 
 * browser (default): calls are made from a Chromium window, like the ones the
-  user interface makes. Works with SSO and with anti-bot checks: you do the
-  login and the checks yourself, in the window. MOODLESH_BROWSER_CHANNEL=chrome
+  user interface makes. Works with SSO: you log in yourself, in the window.
+  Sites with bot protection work only if the protection accepts an automated
+  browser once you pass its check; some do not. MOODLESH_BROWSER_CHANNEL=chrome
   uses the installed Chrome; MOODLESH_BROWSER_PATH points to an executable.
 * http: direct HTTP requests with the saved session, no windows.
+* rest: the REST web services, with a token (MOODLESH_TOKEN or --token).
 
-With a token (--token or MOODLESH_TOKEN) the REST web services are used instead.
+Without --transport, a token selects rest and otherwise browser is used.
 --demo uses sample data held in memory.
 """
 
@@ -62,26 +64,32 @@ from moodlesh.moodle import (
 from moodlesh.moodle.auth import default_state_dir
 from moodlesh.moodle.transport import require_secure_connection
 
+TRANSPORTS = ("browser", "http", "rest")
+
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_USAGE = 2
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="moodlesh", description="The command line Moodle never had.")
+    parser = argparse.ArgumentParser(
+        prog="moodlesh",
+        description="Edit the structure of many Moodle courses at once, from the command line.",
+    )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--url", default=os.environ.get("MOODLESH_URL"), help="Moodle URL (or MOODLESH_URL)")
     parser.add_argument(
         "--token",
         default=os.environ.get("MOODLESH_TOKEN"),
-        help="web service token: use REST instead of the session (prefer MOODLESH_TOKEN: "
+        help="web service token for the rest transport (prefer MOODLESH_TOKEN: "
         "arguments are visible to other users of the computer)",
     )
     parser.add_argument(
         "--transport",
-        choices=("browser", "http"),
-        default=os.environ.get("MOODLESH_TRANSPORT", "browser"),
-        help="browser: calls from a Chromium window (default); http: direct requests",
+        choices=TRANSPORTS,
+        default=os.environ.get("MOODLESH_TRANSPORT") or None,
+        help="browser: calls from a Chromium window (default); http: direct requests with the saved "
+        "session; rest: web services with a token (default when a token is given)",
     )
     parser.add_argument("-n", "--dry-run", action="store_true", help="show what would change, change nothing")
     parser.add_argument(
@@ -225,6 +233,9 @@ def _confirm(question: str) -> bool:
 
 def _login(args: argparse.Namespace, console: Console) -> int:
     url = _require_url(args)
+    transport = transport_of(args)
+    if transport == "rest":
+        raise UsageError("no login is needed with a web service token: the rest transport uses the token")
     store = SessionStore()
     if args.password:
         require_secure_connection(url, "a password")  # before asking for the password, not after
@@ -236,7 +247,7 @@ def _login(args: argparse.Namespace, console: Console) -> int:
         BrowserTransport(
             url, store=store, notify=_notifier(console), launch_options=_launch_options()
         ).close()
-    if args.transport == "http":
+    if transport == "http":
         cookies = store.load(url)
         assert cookies is not None
         # With the http transport the session must also work outside the browser.
@@ -279,9 +290,11 @@ def _open_backend(args: argparse.Namespace, console: Console) -> Iterator[Course
         return
     url = _require_url(args)
     editable_only = not args.all_courses
-    if args.token:
+    chosen = transport_of(args)
+    if chosen == "rest":
+        assert args.token  # checked by transport_of
         yield _safety(connect_with_token(url, args.token, editable_only=editable_only), url, args, console)
-    elif args.transport == "http":
+    elif chosen == "http":
         yield _safety(connect_with_session(url, editable_only=editable_only), url, args, console)
     else:
         console.print("[dim]opening the browser (keep it open while you use moodlesh)…[/dim]")
@@ -297,6 +310,28 @@ def _safety(backend: CourseBackend, url: str, args: argparse.Namespace, console:
         console.print("[yellow]dry run: changes are simulated, Moodle is not modified[/yellow]")
         return DryRunBackend(backend)
     return JournalingBackend(backend, Journal(journal_path(), url))
+
+
+def transport_of(args: argparse.Namespace) -> str:
+    """The transport to use: the one asked for, checked against the token.
+
+    Raises:
+        UsageError: `rest` without a token, or a token with another transport
+            (it would be silently ignored).
+    """
+    transport: str | None = args.transport
+    if transport is None:
+        return "rest" if args.token else "browser"
+    if transport not in TRANSPORTS:  # from MOODLESH_TRANSPORT, which argparse does not check
+        raise UsageError(f"unknown transport '{transport}': use one of {', '.join(TRANSPORTS)}")
+    if transport == "rest" and not args.token:
+        raise UsageError("the rest transport needs a web service token: set MOODLESH_TOKEN (or use --token)")
+    if transport != "rest" and args.token:
+        raise UsageError(
+            f"a web service token was given, but the {transport} transport does not use it: "
+            "remove the token (check MOODLESH_TOKEN) or use --transport rest"
+        )
+    return transport
 
 
 def journal_path() -> Path:

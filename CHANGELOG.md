@@ -57,6 +57,11 @@ Nothing has been released yet. This section describes what the first release,
   the possible causes, suggests asking the site administrator, and shows
   Moodle's reason when the site sends it.
 
+- `--transport rest` selects the web service transport explicitly. A token
+  still selects it by itself, but a token given with `--transport browser` or
+  `http` is now an error instead of being silently preferred, and `rest`
+  without a token says what is missing.
+
 ### Security
 
 - `moodlesh login --password` (and `login_with_password` in the library)
