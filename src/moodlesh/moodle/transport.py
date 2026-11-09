@@ -20,6 +20,7 @@ import re
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -34,6 +35,32 @@ _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 # one of them: inside a function it means "this course is not accessible to you".
 _AJAX_AUTH_ERRORS = frozenset({"invalidsesskey", "servicerequireslogin"})
 _REST_AUTH_ERRORS = frozenset({"invalidtoken", "accessexception"})
+
+
+# Hosts where credentials may be sent over plain HTTP: the traffic never leaves
+# the computer (local test sites).
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def require_secure_connection(base_url: str, credential: str) -> None:
+    """Refuse to send `credential` (e.g. "a password") to `base_url` over an unencrypted connection.
+
+    Plain HTTP is accepted only for local test sites (`localhost`, `127.0.0.1`,
+    `::1`, `*.localhost`), whose traffic never leaves the computer.
+
+    Raises:
+        AuthenticationError: the credential would travel in clear text.
+    """
+    parts = urlsplit(base_url)
+    if parts.scheme == "https":
+        return
+    host = parts.hostname or ""
+    if parts.scheme == "http" and (host in _LOCAL_HOSTS or host.endswith(".localhost")):
+        return
+    raise AuthenticationError(
+        f"refusing to send {credential} to {base_url}: the connection is not encrypted. "
+        "Use the https:// address of the site (plain http:// is accepted only for local test sites)."
+    )
 
 
 class Transport(Protocol):
@@ -145,6 +172,7 @@ class RestTransport:
     ) -> None:
         if not token:
             raise ValueError("empty token")
+        require_secure_connection(base_url, "a web service token")
         self._url = f"{base_url.rstrip('/')}/webservice/rest/server.php"
         self._token = token
         self._client = client or httpx.Client(timeout=timeout)

@@ -148,3 +148,14 @@ def test_course_not_accessible_is_not_an_authentication_error(server: FakeAjaxSe
     with pytest.raises(BackendError) as info:
         ajax(server).call("core_courseformat_get_state", {"courseid": 4})
     assert not isinstance(info.value, AuthenticationError)
+
+
+@pytest.mark.parametrize("url", ["https://moodle.example.org", "http://localhost:8000", "http://127.0.0.1"])
+def test_rest_accepts_encrypted_or_local_sites(url: str) -> None:
+    RestTransport(url, "tok", client=httpx.Client())
+
+
+@pytest.mark.parametrize("url", ["http://moodle.example.org", "http://10.0.0.5"])
+def test_rest_refuses_to_send_the_token_in_clear_text(url: str) -> None:
+    with pytest.raises(AuthenticationError, match="refusing to send a web service token"):
+        RestTransport(url, "tok", client=httpx.Client())

@@ -88,3 +88,9 @@ def test_login_with_password_refuses_plain_http_before_asking_anything(
     code = main(["--url", "http://moodle.example.org", "login", "--password"])
     assert code == EXIT_ERROR
     assert "not encrypted" in capsys.readouterr().out
+
+
+def test_token_over_plain_http_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
+    code = main(["--url", "http://moodle.example.org", "--token", "tok", "exec", "ls"])
+    assert code == EXIT_ERROR
+    assert "refusing to send a web service token" in capsys.readouterr().out

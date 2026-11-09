@@ -21,8 +21,9 @@ release yet: fixes go to the `main` branch.
   no credentials.
 - **Tokens and passwords** are never written to disk by moodlesh. Prefer
   `MOODLESH_TOKEN` to `--token`, since command-line arguments are visible to
-  other local users. `moodlesh login --password` refuses to send a password
-  over plain `http://`, except to local test sites (`localhost`).
+  other local users. moodlesh refuses to send a password (`moodlesh login
+  --password`) or a web service token over plain `http://`, except to local
+  test sites (`localhost`).
 - **Network**: moodlesh talks only to the Moodle URL you give it. There is no
   telemetry.
 - **Logs**: `-v`/`-vv` print function names and arguments (course ids, names),
