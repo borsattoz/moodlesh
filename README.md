@@ -299,7 +299,8 @@ and the entry has `"partial": true`, with the section that now exists in
 
 With the browser transport, requests are sent from a Chromium window, the same
 way Moodle's own pages send them. `moodlesh login --password` logs in with a
-Moodle username and password (manual accounts only), without a browser.
+Moodle username and password (manual accounts only), without a browser; it
+works only over `https://`, so that the password is never sent in clear text.
 `moodlesh logout` ends the session on Moodle when the site allows it, and
 always deletes the local copy.
 
