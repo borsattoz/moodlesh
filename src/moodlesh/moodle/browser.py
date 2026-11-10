@@ -6,21 +6,22 @@ exactly like the ones the user interface makes, and the checks (login, SSO,
 security verification) are passed by the user, by hand, in the window. No
 check is bypassed.
 
-Sync Playwright cannot coexist with the asyncio loop of the interactive shell,
-so the browser lives in a dedicated thread: `call` queues the work and waits
-for its result.
+The browser lives in a dedicated thread running its own asyncio loop with
+Playwright's async API, so it never interferes with the asyncio loop of the
+interactive shell. The rest of moodlesh sees a synchronous `call`: it submits
+a coroutine to that loop and waits for its result.
 """
 
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
 import dataclasses
 import json
 import logging
-import queue
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
-from concurrent.futures import Future
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Final, Literal, Protocol, Self, TypeAlias, TypedDict
@@ -47,26 +48,26 @@ WaitUntil: TypeAlias = Literal["commit", "domcontentloaded", "load", "networkidl
 
 
 class _Page(Protocol):
-    """The part of a Playwright `Page` this module uses (the tests pass a fake one)."""
+    """The part of a Playwright async `Page` this module uses (the tests pass a fake one)."""
 
     @property
     def url(self) -> str: ...
 
     def is_closed(self) -> bool: ...
 
-    def goto(self, url: str, *, wait_until: WaitUntil | None = ...) -> object: ...
+    async def goto(self, url: str, *, wait_until: WaitUntil | None = ...) -> object: ...
 
-    def evaluate(self, expression: str, arg: Any = ...) -> Any: ...
+    async def evaluate(self, expression: str, arg: Any = ...) -> Any: ...
 
-    def wait_for_timeout(self, timeout: float) -> None: ...
+    async def wait_for_timeout(self, timeout: float) -> None: ...
 
 
 class _Context(Protocol):
-    """The part of a Playwright `BrowserContext` this module uses."""
+    """The part of a Playwright async `BrowserContext` this module uses."""
 
-    def add_cookies(self, cookies: Sequence[Any]) -> None: ...
+    async def add_cookies(self, cookies: Sequence[Any]) -> None: ...
 
-    def cookies(self, urls: str | Sequence[str] | None = ...) -> Sequence[Mapping[str, object]]: ...
+    async def cookies(self, urls: str | Sequence[str] | None = ...) -> Sequence[Mapping[str, object]]: ...
 
 
 class _MoodleState(TypedDict, total=False):
@@ -130,8 +131,12 @@ class BrowserTransport(Transport):
             poll_interval_s=poll_interval_s,
             launch_options=dict(launch_options or {}),
         )
-        self._jobs: queue.Queue[_Job | None] = queue.Queue()
-        self._ready: Future[None] = Future()
+        # Set by the browser thread before `_ready` completes successfully.
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._session: _PageSession | None = None
+        self._stop: asyncio.Event | None = None
+        self._ready: concurrent.futures.Future[None] = concurrent.futures.Future()
+        self._calls = threading.Lock()  # one call at a time: Moodle calls are sequential
         self._thread = threading.Thread(target=self._run, name="moodlesh-browser", daemon=True)
         self._thread.start()
         try:
@@ -152,23 +157,31 @@ class BrowserTransport(Transport):
         self.close()
 
     def call(self, function: str, args: Mapping[str, Any]) -> Any:
-        if not self._thread.is_alive():
+        loop, session = self._loop, self._session
+        if loop is None or session is None or not self._thread.is_alive():
             raise BackendError("the browser is no longer available", function=function)
-        job = _Job(function, dict(args))
-        self._jobs.put(job)
-        return job.result.result()
+        with self._calls:
+            future = asyncio.run_coroutine_threadsafe(session.call(function, dict(args)), loop)
+            try:
+                return future.result()
+            except concurrent.futures.CancelledError:  # the loop stopped: the browser closed
+                raise BackendError("the browser closed", function=function) from None
 
     def close(self) -> None:
         """Save the session and close the browser."""
-        if self._thread.is_alive():
-            self._jobs.put(None)
+        loop, stop = self._loop, self._stop
+        if loop is not None and stop is not None and self._thread.is_alive():
+            loop.call_soon_threadsafe(stop.set)
             self._thread.join(timeout=30)
 
     # ------------------------------------------------------------ browser thread
     def _run(self) -> None:
+        asyncio.run(self._main())
+
+    async def _main(self) -> None:
         try:
-            from playwright.sync_api import Error as PlaywrightError  # noqa: PLC0415 - optional dependency
-            from playwright.sync_api import sync_playwright  # noqa: PLC0415
+            from playwright.async_api import Error as PlaywrightError  # noqa: PLC0415 - optional dependency
+            from playwright.async_api import async_playwright  # noqa: PLC0415
         except ImportError as exc:
             self._ready.set_exception(
                 AuthenticationError(
@@ -180,42 +193,27 @@ class BrowserTransport(Transport):
 
         cfg = dataclasses.replace(self._config, page_error=PlaywrightError)
         try:
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=False, **cfg.launch_options)
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=False, **cfg.launch_options)
                 try:
-                    context = browser.new_context()
-                    _restore_cookies(context, cfg)
-                    session = _PageSession(context.new_page(), cfg)
-                    session.ensure_ready()
-                    _save_cookies(context, cfg)
+                    context = await browser.new_context()
+                    await _restore_cookies(context, cfg)
+                    session = _PageSession(await context.new_page(), cfg)
+                    await session.ensure_ready()
+                    await _save_cookies(context, cfg)
+                    self._stop = asyncio.Event()
+                    self._session = session
+                    self._loop = asyncio.get_running_loop()
                     self._ready.set_result(None)
-                    self._serve(session)
-                    _save_cookies(context, cfg)
+                    await self._stop.wait()  # calls run on this loop meanwhile
+                    await _save_cookies(context, cfg)
                 finally:
-                    browser.close()
+                    await browser.close()
         except BaseException as exc:  # must be forwarded to the main thread
             if not self._ready.done():
                 self._ready.set_exception(exc)
             else:
                 logger.error("the browser closed: %s", exc)
-        finally:
-            self._fail_pending_jobs()
-
-    def _serve(self, session: _PageSession) -> None:
-        while (job := self._jobs.get()) is not None:
-            try:
-                job.result.set_result(session.call(job.function, job.args))
-            except BaseException as exc:  # forwarded to the caller
-                job.result.set_exception(exc)
-
-    def _fail_pending_jobs(self) -> None:
-        while True:
-            try:
-                job = self._jobs.get_nowait()
-            except queue.Empty:
-                return
-            if job is not None and not job.result.done():
-                job.result.set_exception(BackendError("the browser closed", function=job.function))
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,34 +229,30 @@ class _Config:
     page_error: type[Exception] = Exception
 
 
-@dataclass
-class _Job:
-    function: str
-    args: dict[str, Any]
-
-    def __post_init__(self) -> None:
-        self.result: Future[Any] = Future()
-
-
 class _PageSession:
-    """A Moodle tab and its sesskey. Used only by the browser thread."""
+    """A Moodle tab and its sesskey. Used only by the browser thread's loop."""
 
     def __init__(self, page: _Page, cfg: _Config) -> None:
         self._page = page
         self._cfg = cfg
         self._sesskey: str | None = None
 
-    def ensure_ready(self) -> str:
-        """Wait until the tab shows an authenticated Moodle page and return its sesskey."""
+    async def ensure_ready(self) -> str:
+        """Wait until the tab shows an authenticated Moodle page and return its sesskey.
+
+        Raises:
+            AuthenticationError: the window was closed, or Moodle did not become
+                ready in time.
+        """
         cfg = self._cfg
         if not is_moodle_page(self._page.url, cfg.base_url):
-            self._goto(f"{cfg.base_url}/my/")
+            await self._goto(f"{cfg.base_url}/my/")
         deadline: float = time.monotonic() + cfg.ready_timeout_s
         last_hint: str = ""
         while True:
             if self._page.is_closed():
                 raise AuthenticationError("the browser window was closed")
-            state, hint = self._inspect()
+            state, hint = await self._inspect()
             if state is not None:
                 self._sesskey = state
                 if last_hint and last_hint != _HINT_LOADING:
@@ -273,15 +267,15 @@ class _PageSession:
                 raise AuthenticationError(
                     f"Moodle not reachable within {cfg.ready_timeout_s:.0f} seconds: {hint}"
                 )
-            self._wait(cfg.poll_interval_s)
+            await self._wait(cfg.poll_interval_s)
 
-    def call(self, function: str, args: Mapping[str, Any]) -> Any:
+    async def call(self, function: str, args: Mapping[str, Any]) -> Any:
         for attempt in (1, 2):
-            sesskey: str = self._sesskey or self.ensure_ready()
+            sesskey: str = self._sesskey or await self.ensure_ready()
             url: str = f"{self._cfg.base_url}/lib/ajax/service.php?sesskey={sesskey}&info={function}"
             logger.debug("AJAX (browser) %s %s", function, args)
             try:
-                fetched: Sequence[int | str] = self._page.evaluate(  # [status, text]
+                fetched: Sequence[int | str] = await self._page.evaluate(  # [status, text]
                     _JS_FETCH, {"url": url, "body": _json_dumps(ajax_request_body(function, args))}
                 )
                 status, text = fetched
@@ -300,17 +294,17 @@ class _PageSession:
             # Go back to /my/ before retrying: if a login or a security check is
             # needed, the user sees it in the window and ensure_ready waits for it.
             self._sesskey = None
-            self._goto(f"{self._cfg.base_url}/my/")
+            await self._goto(f"{self._cfg.base_url}/my/")
         raise AssertionError("unreachable")  # pragma: no cover
 
     # ------------------------------------------------------------------- helpers
-    def _inspect(self) -> tuple[str | None, str]:
+    async def _inspect(self) -> tuple[str | None, str]:
         """(sesskey if the page is authenticated Moodle, otherwise a hint for the user)."""
         url: str = self._page.url
         if not is_moodle_page(url, self._cfg.base_url):
             return None, "complete the login in the browser window"
         try:
-            state: _MoodleState | None = self._page.evaluate(_JS_MOODLE_STATE)
+            state: _MoodleState | None = await self._page.evaluate(_JS_MOODLE_STATE)
         except self._cfg.page_error:  # page still navigating: try again later
             return None, _HINT_LOADING
         if state and state.get("loading"):
@@ -318,37 +312,37 @@ class _PageSession:
         if not state:
             return None, "pass the security check in the browser window, if asked"
         if state.get("userId") == 0:
-            self._goto(f"{self._cfg.base_url}/login/index.php")
+            await self._goto(f"{self._cfg.base_url}/login/index.php")
             return None, "complete the login in the browser window"
         return str(state["sesskey"]), ""
 
-    def _goto(self, url: str) -> None:
+    async def _goto(self, url: str) -> None:
         try:
-            self._page.goto(url, wait_until="commit")
+            await self._page.goto(url, wait_until="commit")
         except self._cfg.page_error as exc:  # chained redirects (SSO) or interrupted navigation
             logger.debug("navigation to %s interrupted: %s", url, exc)
 
-    def _wait(self, seconds: float) -> None:
+    async def _wait(self, seconds: float) -> None:
         try:
-            self._page.wait_for_timeout(seconds * 1000)
+            await self._page.wait_for_timeout(seconds * 1000)
         except self._cfg.page_error:  # page closed while waiting: the next round detects it
-            time.sleep(seconds)
+            await asyncio.sleep(seconds)
 
 
-def _restore_cookies(context: _Context, cfg: _Config) -> None:
+async def _restore_cookies(context: _Context, cfg: _Config) -> None:
     saved: list[RawCookie] = cfg.store.load_raw(cfg.base_url) or []
     usable: list[RawCookie] = [c for c in saved if c.get("domain") and c.get("path")]
     if usable:
         try:
-            context.add_cookies(usable)
+            await context.add_cookies(usable)
             logger.debug("restored %d saved cookies", len(usable))
         except cfg.page_error as exc:  # file from an older version: the user logs in again
             logger.debug("saved cookies not usable: %s", exc)
 
 
-def _save_cookies(context: _Context, cfg: _Config) -> None:
+async def _save_cookies(context: _Context, cfg: _Config) -> None:
     try:
-        cookies: list[RawCookie] = [dict(c) for c in context.cookies(cfg.base_url)]
+        cookies: list[RawCookie] = [dict(c) for c in await context.cookies(cfg.base_url)]
     except cfg.page_error as exc:
         logger.debug("cannot read the cookies from the browser: %s", exc)
         return
