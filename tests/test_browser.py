@@ -17,7 +17,7 @@ import pytest
 
 from moodlesh.core.errors import AuthenticationError, BackendError
 from moodlesh.moodle.auth import SessionStore
-from moodlesh.moodle.browser import _Config, _PageSession
+from moodlesh.moodle.browser import _Config, _TabSession
 
 BASE = "https://moodle.example.org"
 CHALLENGE = "<html><head><title>Security Check</title></head></html>"
@@ -62,7 +62,7 @@ class FakePage:
 class SyncSession:
     """Runs the async `_PageSession` methods to completion, for readable tests."""
 
-    def __init__(self, inner: _PageSession) -> None:
+    def __init__(self, inner: _TabSession) -> None:
         self.inner = inner
 
     def call(self, function: str, args: dict[str, Any]) -> Any:
@@ -77,7 +77,7 @@ def session(page: FakePage, tmp_path: Path, messages: list[str] | None = None) -
     cfg = _Config(
         BASE, SessionStore(tmp_path), sink.append, ready_timeout_s=5, poll_interval_s=0, launch_options={}
     )
-    return SyncSession(_PageSession(page, cfg))
+    return SyncSession(_TabSession(page, cfg))
 
 
 def test_call_uses_sesskey_from_page(tmp_path: Path) -> None:
@@ -190,7 +190,7 @@ def test_only_page_errors_are_retried(tmp_path: Path) -> None:
     page = FakePage()
     page.evaluate = failing  # type: ignore[method-assign]
     sess = SyncSession(
-        _PageSession(
+        _TabSession(
             page,
             _Config(BASE, SessionStore(tmp_path), lambda _: None, 5, 0, {}, page_error=FakePlaywrightError),
         )
@@ -214,7 +214,7 @@ def test_page_errors_are_retried_once(tmp_path: Path) -> None:
     page = FakePage()
     page.evaluate = flaky  # type: ignore[method-assign]
     sess = SyncSession(
-        _PageSession(
+        _TabSession(
             page,
             _Config(BASE, SessionStore(tmp_path), lambda _: None, 5, 0, {}, page_error=FakePlaywrightError),
         )

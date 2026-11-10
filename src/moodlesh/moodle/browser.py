@@ -3,11 +3,10 @@
 It is needed when the site sits behind an anti-bot check (e.g. Cloudflare) that
 blocks HTTP clients: requests are sent from the Moodle page open in Chromium,
 exactly like the ones the user interface makes, and the checks (login, SSO,
-security verification) are passed by the user, by hand, in the window. No
-check is bypassed.
+security verification) are passed by the user, by hand, in the window.
 
 The browser lives in a dedicated thread running its own asyncio loop with
-Playwright's async API, so it never interferes with the asyncio loop of the
+nodriver's async API, so it never interferes with the asyncio loop of the
 interactive shell. The rest of moodlesh sees a synchronous `call`: it submits
 a coroutine to that loop and waits for its result.
 """
@@ -19,12 +18,16 @@ import concurrent.futures
 import dataclasses
 import json
 import logging
+import nodriver as uc
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from nodriver import Tab, cdp
 from types import TracebackType
 from typing import Any, Final, Literal, Protocol, Self, TypeAlias, TypedDict, final
+
+from nodriver.cdp.runtime import await_promise
 
 from moodlesh.core.errors import AuthenticationError, BackendError
 from moodlesh.moodle.auth import RawCookie, SessionStore, is_moodle_page
@@ -45,21 +48,6 @@ Notify: TypeAlias = Callable[[str], None]
 """Shows a message to the user (e.g. "complete the login in the browser window")."""
 
 WaitUntil: TypeAlias = Literal["commit", "domcontentloaded", "load", "networkidle"]
-
-
-class _Page(Protocol):
-    """The part of a Playwright async `Page` this module uses (the tests pass a fake one)."""
-
-    @property
-    def url(self) -> str: ...
-
-    def is_closed(self) -> bool: ...
-
-    async def goto(self, url: str, *, wait_until: WaitUntil | None = ...) -> object: ...
-
-    async def evaluate(self, expression: str, arg: Any = ...) -> Any: ...
-
-    async def wait_for_timeout(self, timeout: float) -> None: ...
 
 
 class _Context(Protocol):
@@ -87,22 +75,12 @@ class _Loading(TypedDict):
 
 # State of the current page: sesskey and user if it is a Moodle page, `{loading: true}`
 # while it is still loading, null otherwise (e.g. a security check page).
-_JS_MOODLE_STATE: Final = """() => (window.M && M.cfg && M.cfg.sesskey)
+_JS_MOODLE_STATE: Final = """(window.M && M.cfg && M.cfg.sesskey)
     ? {sesskey: M.cfg.sesskey, userId: (M.cfg.userId === undefined ? null : M.cfg.userId)}
     : (document.readyState === "complete" ? null : {loading: true})"""
 
 # Not worth telling the user: it resolves by itself.
 _HINT_LOADING: Final = "waiting for the page to load"
-
-_JS_FETCH: Final = """async ({url, body}) => {
-    const response = await fetch(url, {
-        method: "POST",
-        credentials: "same-origin",
-        headers: {"Content-Type": "application/json"},
-        body,
-    });
-    return [response.status, await response.text()];
-}"""
 
 
 def _log_notify(message: str) -> None:
@@ -140,7 +118,7 @@ class BrowserTransport(Transport):
         )
         # Set by the browser thread before `_ready` completes successfully.
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._session: _PageSession | None = None
+        self._session: _TabSession | None = None
         self._stop: asyncio.Event | None = None
         self._ready: concurrent.futures.Future[None] = concurrent.futures.Future()
         self._calls = threading.Lock()  # one call at a time: Moodle calls are sequential
@@ -186,36 +164,36 @@ class BrowserTransport(Transport):
         asyncio.run(self._main())
 
     async def _main(self) -> None:
+        cfg = self._config
         try:
-            from playwright.async_api import Error as PlaywrightError  # noqa: PLC0415 - optional dependency
-            from playwright.async_api import async_playwright  # noqa: PLC0415
-        except ImportError as exc:
-            self._ready.set_exception(
-                AuthenticationError(
-                    "Playwright is not installed: `pip install playwright && playwright install chromium`"
-                )
-            )
-            logger.debug("importing playwright failed: %s", exc)
-            return
+            browser = await uc.start(headless=False)
+            try:
+                session = _TabSession(await browser.get(), cfg)
+                await session.ensure_ready()
+                self._stop = asyncio.Event()
+                self._session = session
+                self._loop = asyncio.get_running_loop()
+                self._ready.set_result(None)
+                await self._stop.wait()
+            finally:
+                browser.stop()
 
-        cfg = dataclasses.replace(self._config, page_error=PlaywrightError)
-        try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=False, **cfg.launch_options)
-                try:
-                    context = await browser.new_context()
-                    await _restore_cookies(context, cfg)
-                    session = _PageSession(await context.new_page(), cfg)
-                    await session.ensure_ready()
-                    await _save_cookies(context, cfg)
-                    self._stop = asyncio.Event()
-                    self._session = session
-                    self._loop = asyncio.get_running_loop()
-                    self._ready.set_result(None)
-                    await self._stop.wait()  # calls run on this loop meanwhile
-                    await _save_cookies(context, cfg)
-                finally:
-                    await browser.close()
+            #async with async_playwright() as p:
+            #    browser = await p.chromium.launch(headless=False, **cfg.launch_options)
+            #    try:
+            #        context = await browser.new_context()
+            #        await _restore_cookies(context, cfg)
+            #        session = _TabSession(await context.new_page(), cfg)
+            #        await session.ensure_ready()
+            #        await _save_cookies(context, cfg)
+            #        self._stop = asyncio.Event()
+            #        self._session = session
+            #        self._loop = asyncio.get_running_loop()
+            #        self._ready.set_result(None)
+            #        await self._stop.wait()  # calls run on this loop meanwhile
+            #        await _save_cookies(context, cfg)
+            #    finally:
+            #        await browser.close()
         except BaseException as exc:  # must be forwarded to the main thread
             if not self._ready.done():
                 self._ready.set_exception(exc)
@@ -236,11 +214,11 @@ class _Config:
     page_error: type[Exception] = Exception
 
 
-class _PageSession:
+class _TabSession:
     """A Moodle tab and its sesskey. Used only by the browser thread's loop."""
 
-    def __init__(self, page: _Page, cfg: _Config) -> None:
-        self._page = page
+    def __init__(self, tab: Tab, cfg: _Config) -> None:
+        self._tab = tab
         self._cfg = cfg
         self._sesskey: str | None = None
 
@@ -252,13 +230,11 @@ class _PageSession:
                 ready in time.
         """
         cfg = self._cfg
-        if not is_moodle_page(self._page.url, cfg.base_url):
+        if not is_moodle_page(self._tab.url, cfg.base_url):
             await self._goto(f"{cfg.base_url}/my/")
         deadline: float = time.monotonic() + cfg.ready_timeout_s
         last_hint: str = ""
         while True:
-            if self._page.is_closed():
-                raise AuthenticationError("the browser window was closed")
             state, hint = await self._inspect()
             if state is not None:
                 self._sesskey = state
@@ -266,7 +242,7 @@ class _PageSession:
                     cfg.notify("ok, the Moodle page is ready")
                 return state
             if hint != last_hint:
-                logger.debug("waiting: %s (page %s)", hint, self._page.url)
+                logger.debug("waiting: %s (page %s)", hint, self._tab.url)
                 if hint != _HINT_LOADING:
                     cfg.notify(hint)
                 last_hint = hint
@@ -277,43 +253,39 @@ class _PageSession:
             await self._wait(cfg.poll_interval_s)
 
     async def call(self, function: str, args: Mapping[str, Any]) -> Any:
-        for attempt in (1, 2):
-            sesskey: str = self._sesskey or await self.ensure_ready()
-            url: str = f"{self._cfg.base_url}/lib/ajax/service.php?sesskey={sesskey}&info={function}"
-            logger.debug("AJAX (browser) %s %s", function, args)
-            try:
-                fetched: Sequence[int | str] = await self._page.evaluate(  # [status, text]
-                    _JS_FETCH, {"url": url, "body": _json_dumps(ajax_request_body(function, args))}
-                )
-                status, text = fetched
-                return decode_ajax_response(function, int(status), str(text))
-            except AuthenticationError as exc:
-                retryable = isinstance(exc, NotMoodleResponseError) or exc.errorcode in _RETRY_ERRORCODES
-                if attempt == 2 or not retryable:
-                    raise
-                logger.debug("invalid response (%s): reloading Moodle and retrying", exc)
-            except BackendError:
-                raise  # error returned by Moodle: never retry (it might be a write)
-            except self._cfg.page_error as exc:  # page navigating or closed
-                if attempt == 2 or self._page.is_closed():
-                    raise BackendError(f"browser error: {exc}", function=function) from exc
-                logger.debug("browser error (%s): retrying", exc)
-            # Go back to /my/ before retrying: if a login or a security check is
-            # needed, the user sees it in the window and ensure_ready waits for it.
-            self._sesskey = None
-            await self._goto(f"{self._cfg.base_url}/my/")
-        raise AssertionError("unreachable")  # pragma: no cover
+        sesskey: str = self._sesskey or await self.ensure_ready()
+        url: str = f"{self._cfg.base_url}/lib/ajax/service.php?sesskey={sesskey}&info={function}"
+        body = ajax_request_body(function, args)
+        logger.debug("AJAX (browser) %s %s", function, args)
+        expression = """(async () => {{
+            const response = await fetch({url}, {{
+            method: "POST",
+            credentials: "same-origin",
+            headers: {{"Content-Type": "application/json"}},
+            body: {body}
+            }});
+            return [response.status, await response.text()];
+        }})()""".format(url=json.dumps(url), body=json.dumps(body))
+
+        result, error = await self._tab.send(cdp.runtime.evaluate(expression=expression, await_promise=True, return_by_value=True))
+        if error is not None:
+            raise BackendError("browser error: {details}".format(details=error.exception.description if error.exception else error.text))
+
+        status, text = result.value
+        return decode_ajax_response(function, int(status), str(text))
 
     # ------------------------------------------------------------------- helpers
     async def _inspect(self) -> tuple[str | None, str]:
         """(sesskey if the page is authenticated Moodle, otherwise a hint for the user)."""
-        url: str = self._page.url
+        url: str = self._tab.url
         if not is_moodle_page(url, self._cfg.base_url):
             return None, "complete the login in the browser window"
-        try:
-            state: _MoodleState | _Loading | None = await self._page.evaluate(_JS_MOODLE_STATE)
-        except self._cfg.page_error:  # page still navigating: try again later
-            return None, _HINT_LOADING
+
+        result, error = await self._tab.send(cdp.runtime.evaluate(expression=_JS_MOODLE_STATE, await_promise=True, return_by_value=True))
+        if error is not None:
+            raise BackendError("browser error: {details}".format(details=error.exception.description if error.exception else error.text))
+
+        state: _MoodleState | _Loading | None = result.value
         if state is None:
             return None, "pass the security check in the browser window, if asked"
         if "loading" in state:
@@ -325,15 +297,12 @@ class _PageSession:
 
     async def _goto(self, url: str) -> None:
         try:
-            await self._page.goto(url, wait_until="commit")
+            await self._tab.get(url)
         except self._cfg.page_error as exc:  # chained redirects (SSO) or interrupted navigation
             logger.debug("navigation to %s interrupted: %s", url, exc)
 
     async def _wait(self, seconds: float) -> None:
-        try:
-            await self._page.wait_for_timeout(seconds * 1000)
-        except self._cfg.page_error:  # page closed while waiting: the next round detects it
-            await asyncio.sleep(seconds)
+        await self._tab.wait(seconds)
 
 
 async def _restore_cookies(context: _Context, cfg: _Config) -> None:
@@ -356,6 +325,3 @@ async def _save_cookies(context: _Context, cfg: _Config) -> None:
     path = cfg.store.save_raw(cfg.base_url, cookies)
     logger.debug("session saved to %s", path)
 
-
-def _json_dumps(value: object) -> str:
-    return json.dumps(value)
