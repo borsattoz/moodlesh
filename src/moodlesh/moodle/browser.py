@@ -265,7 +265,7 @@ class _TabSession:
             body: {body}
             }});
             return [response.status, await response.text()];
-        }})()""".format(url=json.dumps(url), body=json.dumps(body))
+        }})()""".format(url=json.dumps(url), body=json.dumps(json.dumps(body)))
 
         result, error = await self._tab.send(cdp.runtime.evaluate(expression=expression, await_promise=True, return_by_value=True))
         if error is not None:
