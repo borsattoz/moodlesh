@@ -24,7 +24,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Final, Literal, Protocol, Self, TypeAlias, TypedDict
+from typing import Any, Final, Literal, Protocol, Self, TypeAlias, TypedDict, final
 
 from moodlesh.core.errors import AuthenticationError, BackendError
 from moodlesh.moodle.auth import RawCookie, SessionStore, is_moodle_page
@@ -70,12 +70,19 @@ class _Context(Protocol):
     async def cookies(self, urls: str | Sequence[str] | None = ...) -> Sequence[Mapping[str, object]]: ...
 
 
-class _MoodleState(TypedDict, total=False):
-    """What `_JS_MOODLE_STATE` returns for a Moodle page (or `{loading: true}`)."""
+@final
+class _MoodleState(TypedDict):
+    """What `_JS_MOODLE_STATE` returns for a Moodle page."""
 
     sesskey: str
     userId: int | None
-    loading: bool
+
+
+@final
+class _Loading(TypedDict):
+    """What `_JS_MOODLE_STATE` returns while the page is still loading."""
+
+    loading: Literal[True]
 
 
 # State of the current page: sesskey and user if it is a Moodle page, `{loading: true}`
@@ -304,17 +311,17 @@ class _PageSession:
         if not is_moodle_page(url, self._cfg.base_url):
             return None, "complete the login in the browser window"
         try:
-            state: _MoodleState | None = await self._page.evaluate(_JS_MOODLE_STATE)
+            state: _MoodleState | _Loading | None = await self._page.evaluate(_JS_MOODLE_STATE)
         except self._cfg.page_error:  # page still navigating: try again later
             return None, _HINT_LOADING
-        if state and state.get("loading"):
-            return None, _HINT_LOADING
-        if not state:
+        if state is None:
             return None, "pass the security check in the browser window, if asked"
-        if state.get("userId") == 0:
+        if "loading" in state:
+            return None, _HINT_LOADING
+        if state["userId"] == 0:
             await self._goto(f"{self._cfg.base_url}/login/index.php")
             return None, "complete the login in the browser window"
-        return str(state["sesskey"]), ""
+        return state["sesskey"], ""
 
     async def _goto(self, url: str) -> None:
         try:
