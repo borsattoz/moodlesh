@@ -8,6 +8,7 @@ the docstring of `moodlesh.moodle.transport.Transport`.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -102,13 +103,13 @@ class _Page:
     def is_closed(self) -> bool:
         return False
 
-    def goto(self, url: str, wait_until: str = "load") -> None:
+    async def goto(self, url: str, wait_until: str = "load") -> None:
         self.url = url
 
-    def wait_for_timeout(self, ms: float) -> None:
+    async def wait_for_timeout(self, ms: float) -> None:
         pass
 
-    def evaluate(self, script: str, arg: Any = None) -> Any:
+    async def evaluate(self, script: str, arg: Any = None) -> Any:
         if arg is None:  # the state of the Moodle page
             return {"sesskey": "k", "userId": 5}
         self.fetches += 1
@@ -120,8 +121,18 @@ class _Page:
 def _browser(situation: str, tmp_path: Path) -> Setup:
     page = _Page(situation)
     config = _Config(BASE, SessionStore(tmp_path), lambda _: None, 5, 0, {}, page_error=_PageError)
-    # `_PageSession` is what `BrowserTransport` runs in its browser thread.
-    return Setup(_PageSession(page, config), lambda: page.fetches)  # type: ignore[arg-type]
+    # `_PageSession` is what `BrowserTransport` runs on its browser thread's loop.
+    return Setup(_SyncPageSession(_PageSession(page, config)), lambda: page.fetches)
+
+
+class _SyncPageSession:
+    """The synchronous face of `_PageSession`, as `BrowserTransport.call` gives it."""
+
+    def __init__(self, session: _PageSession) -> None:
+        self._session = session
+
+    def call(self, function: str, args: Any) -> Any:
+        return asyncio.run(self._session.call(function, args))
 
 
 TRANSPORTS: dict[str, Callable[[str, Path], Setup]] = {

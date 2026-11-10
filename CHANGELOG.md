@@ -62,6 +62,9 @@ Nothing has been released yet. This section describes what the first release,
   `http` is now an error instead of being silently preferred, and `rest`
   without a token says what is missing.
 
+- The browser transport runs Playwright's async API on its own asyncio loop
+  (still in a dedicated thread, so nothing changes for the rest of moodlesh).
+
 ### Security
 
 - `moodlesh login --password` (and `login_with_password` in the library)

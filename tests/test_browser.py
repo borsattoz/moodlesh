@@ -1,7 +1,12 @@
-"""Tests of the browser transport logic, with a fake page instead of Playwright."""
+"""Tests of the browser transport logic, with a fake page instead of Playwright.
+
+`_PageSession` is async (it runs on the browser thread's loop): each test runs
+it with `asyncio.run`.
+"""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -37,29 +42,42 @@ class FakePage:
     def is_closed(self) -> bool:
         return self.closed
 
-    def goto(self, url: str, wait_until: str = "load") -> None:
+    async def goto(self, url: str, wait_until: str = "load") -> None:
         self.visited.append(url)
         if self.on_goto:
             self.on_goto(self, url)
         else:
             self.url = url
 
-    def wait_for_timeout(self, ms: float) -> None:
+    async def wait_for_timeout(self, ms: float) -> None:
         pass
 
-    def evaluate(self, script: str, arg: Any = None) -> Any:
+    async def evaluate(self, script: str, arg: Any = None) -> Any:
         if arg is None:  # Moodle state
             return self.states.pop(0) if len(self.states) > 1 else self.states[0]
         self.fetched.append(arg)
         return list(self.responses.pop(0))
 
 
-def session(page: FakePage, tmp_path: Path, messages: list[str] | None = None) -> _PageSession:
+class SyncSession:
+    """Runs the async `_PageSession` methods to completion, for readable tests."""
+
+    def __init__(self, inner: _PageSession) -> None:
+        self.inner = inner
+
+    def call(self, function: str, args: dict[str, Any]) -> Any:
+        return asyncio.run(self.inner.call(function, args))
+
+    def ensure_ready(self) -> str:
+        return asyncio.run(self.inner.ensure_ready())
+
+
+def session(page: FakePage, tmp_path: Path, messages: list[str] | None = None) -> SyncSession:
     sink = messages if messages is not None else []
     cfg = _Config(
         BASE, SessionStore(tmp_path), sink.append, ready_timeout_s=5, poll_interval_s=0, launch_options={}
     )
-    return _PageSession(page, cfg)
+    return SyncSession(_PageSession(page, cfg))
 
 
 def test_call_uses_sesskey_from_page(tmp_path: Path) -> None:
@@ -87,7 +105,7 @@ def test_waits_for_login_on_external_idp(tmp_path: Path) -> None:
 
     calls = {"n": 0}
 
-    def wait(ms: float) -> None:
+    async def wait(ms: float) -> None:
         calls["n"] += 1
         if calls["n"] == 2:
             login_after_two_polls()
@@ -152,7 +170,7 @@ def test_closed_window_is_reported(tmp_path: Path) -> None:
 def test_ready_timeout(tmp_path: Path) -> None:
     page = FakePage(states=[None])
     sess = session(page, tmp_path)
-    sess._cfg = _Config(
+    sess.inner._cfg = _Config(
         BASE, SessionStore(tmp_path), lambda _: None, ready_timeout_s=0, poll_interval_s=0, launch_options={}
     )
     with pytest.raises(AuthenticationError, match="within 0 seconds"):
@@ -164,16 +182,18 @@ class FakePlaywrightError(Exception):
 
 
 def test_only_page_errors_are_retried(tmp_path: Path) -> None:
-    def failing(script: str, arg: Any = None) -> Any:
+    async def failing(script: str, arg: Any = None) -> Any:
         if arg is None:
             return {"sesskey": "k1", "userId": 5}
         raise TypeError("a bug, not a page problem")
 
     page = FakePage()
     page.evaluate = failing  # type: ignore[method-assign]
-    sess = _PageSession(
-        page,
-        _Config(BASE, SessionStore(tmp_path), lambda _: None, 5, 0, {}, page_error=FakePlaywrightError),
+    sess = SyncSession(
+        _PageSession(
+            page,
+            _Config(BASE, SessionStore(tmp_path), lambda _: None, 5, 0, {}, page_error=FakePlaywrightError),
+        )
     )
     with pytest.raises(TypeError):
         sess.call("f", {})
@@ -183,7 +203,7 @@ def test_only_page_errors_are_retried(tmp_path: Path) -> None:
 def test_page_errors_are_retried_once(tmp_path: Path) -> None:
     calls: list[Any] = []
 
-    def flaky(script: str, arg: Any = None) -> Any:
+    async def flaky(script: str, arg: Any = None) -> Any:
         if arg is None:
             return {"sesskey": "k1", "userId": 5}
         calls.append(arg)
@@ -193,9 +213,11 @@ def test_page_errors_are_retried_once(tmp_path: Path) -> None:
 
     page = FakePage()
     page.evaluate = flaky  # type: ignore[method-assign]
-    sess = _PageSession(
-        page,
-        _Config(BASE, SessionStore(tmp_path), lambda _: None, 5, 0, {}, page_error=FakePlaywrightError),
+    sess = SyncSession(
+        _PageSession(
+            page,
+            _Config(BASE, SessionStore(tmp_path), lambda _: None, 5, 0, {}, page_error=FakePlaywrightError),
+        )
     )
     assert sess.call("f", {}) == 7
     assert len(calls) == 2

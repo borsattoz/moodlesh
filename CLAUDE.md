@@ -112,9 +112,9 @@ Moodle error codes (verified on 4.5):
 - `core/`: immutable dataclasses, the `CourseBackend` protocol, positioning
   rules, exceptions. Depends on nothing else in the package.
 - `moodle/`: one `MoodleBackend` over interchangeable transports.
-  `BrowserTransport` (default) runs Playwright in a **dedicated thread**, since
-  sync Playwright cannot share the main thread with prompt_toolkit's asyncio
-  loop; `call()` queues a job and waits on a `Future`. `AjaxSessionTransport`
+  `BrowserTransport` (default) runs Playwright's **async** API on its own
+  asyncio loop in a **dedicated thread**, so it never touches prompt_toolkit's
+  loop; `call()` submits a coroutine with `run_coroutine_threadsafe` and waits. `AjaxSessionTransport`
   (httpx) and `RestTransport` (token) share request/response handling
   (`ajax_request_body`, `decode_ajax_response`).
 - Structure comes from one call, `core_courseformat_get_state`. Subsections
