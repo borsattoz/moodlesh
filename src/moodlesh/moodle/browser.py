@@ -19,10 +19,11 @@ import logging
 import queue
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Any
+from types import TracebackType
+from typing import Any, Final, Literal, Protocol, Self, TypeAlias, TypedDict
 
 from moodlesh.core.errors import AuthenticationError, BackendError
 from moodlesh.moodle.auth import RawCookie, SessionStore, is_moodle_page
@@ -35,22 +36,57 @@ from moodlesh.moodle.transport import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_READY_TIMEOUT_S = 300
-_POLL_INTERVAL_S = 1.0
-_RETRY_ERRORCODES = frozenset({"invalidsesskey", "servicerequireslogin"})
+DEFAULT_READY_TIMEOUT_S: Final = 300
+_POLL_INTERVAL_S: Final = 1.0
+_RETRY_ERRORCODES: Final = frozenset({"invalidsesskey", "servicerequireslogin"})
 
-Notify = Callable[[str], None]
+Notify: TypeAlias = Callable[[str], None]
+"""Shows a message to the user (e.g. "complete the login in the browser window")."""
+
+WaitUntil: TypeAlias = Literal["commit", "domcontentloaded", "load", "networkidle"]
+
+
+class _Page(Protocol):
+    """The part of a Playwright `Page` this module uses (the tests pass a fake one)."""
+
+    @property
+    def url(self) -> str: ...
+
+    def is_closed(self) -> bool: ...
+
+    def goto(self, url: str, *, wait_until: WaitUntil | None = ...) -> object: ...
+
+    def evaluate(self, expression: str, arg: Any = ...) -> Any: ...
+
+    def wait_for_timeout(self, timeout: float) -> None: ...
+
+
+class _Context(Protocol):
+    """The part of a Playwright `BrowserContext` this module uses."""
+
+    def add_cookies(self, cookies: Sequence[Any]) -> None: ...
+
+    def cookies(self, urls: str | Sequence[str] | None = ...) -> Sequence[Mapping[str, object]]: ...
+
+
+class _MoodleState(TypedDict, total=False):
+    """What `_JS_MOODLE_STATE` returns for a Moodle page (or `{loading: true}`)."""
+
+    sesskey: str
+    userId: int | None
+    loading: bool
+
 
 # State of the current page: sesskey and user if it is a Moodle page, `{loading: true}`
 # while it is still loading, null otherwise (e.g. a security check page).
-_JS_MOODLE_STATE = """() => (window.M && M.cfg && M.cfg.sesskey)
+_JS_MOODLE_STATE: Final = """() => (window.M && M.cfg && M.cfg.sesskey)
     ? {sesskey: M.cfg.sesskey, userId: (M.cfg.userId === undefined ? null : M.cfg.userId)}
     : (document.readyState === "complete" ? null : {loading: true})"""
 
 # Not worth telling the user: it resolves by itself.
-_HINT_LOADING = "waiting for the page to load"
+_HINT_LOADING: Final = "waiting for the page to load"
 
-_JS_FETCH = """async ({url, body}) => {
+_JS_FETCH: Final = """async ({url, body}) => {
     const response = await fetch(url, {
         method: "POST",
         credentials: "same-origin",
@@ -59,6 +95,10 @@ _JS_FETCH = """async ({url, body}) => {
     });
     return [response.status, await response.text()];
 }"""
+
+
+def _log_notify(message: str) -> None:
+    logger.warning("%s", message)
 
 
 class BrowserTransport(Transport):
@@ -85,7 +125,7 @@ class BrowserTransport(Transport):
         self._config = _Config(
             base_url=base_url.rstrip("/"),
             store=store or SessionStore(),
-            notify=notify or (lambda message: logger.warning("%s", message)),
+            notify=notify or _log_notify,
             ready_timeout_s=ready_timeout_s,
             poll_interval_s=poll_interval_s,
             launch_options=dict(launch_options or {}),
@@ -100,10 +140,15 @@ class BrowserTransport(Transport):
             self._thread.join(timeout=10)
             raise
 
-    def __enter__(self) -> BrowserTransport:
+    def __enter__(self) -> Self:
         return self
 
-    def __exit__(self, *exc_info: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         self.close()
 
     def call(self, function: str, args: Mapping[str, Any]) -> Any:
@@ -198,7 +243,7 @@ class _Job:
 class _PageSession:
     """A Moodle tab and its sesskey. Used only by the browser thread."""
 
-    def __init__(self, page: Any, cfg: _Config) -> None:
+    def __init__(self, page: _Page, cfg: _Config) -> None:
         self._page = page
         self._cfg = cfg
         self._sesskey: str | None = None
@@ -208,8 +253,8 @@ class _PageSession:
         cfg = self._cfg
         if not is_moodle_page(self._page.url, cfg.base_url):
             self._goto(f"{cfg.base_url}/my/")
-        deadline = time.monotonic() + cfg.ready_timeout_s
-        last_hint = ""
+        deadline: float = time.monotonic() + cfg.ready_timeout_s
+        last_hint: str = ""
         while True:
             if self._page.is_closed():
                 raise AuthenticationError("the browser window was closed")
@@ -232,13 +277,14 @@ class _PageSession:
 
     def call(self, function: str, args: Mapping[str, Any]) -> Any:
         for attempt in (1, 2):
-            sesskey = self._sesskey or self.ensure_ready()
-            url = f"{self._cfg.base_url}/lib/ajax/service.php?sesskey={sesskey}&info={function}"
+            sesskey: str = self._sesskey or self.ensure_ready()
+            url: str = f"{self._cfg.base_url}/lib/ajax/service.php?sesskey={sesskey}&info={function}"
             logger.debug("AJAX (browser) %s %s", function, args)
             try:
-                status, text = self._page.evaluate(
+                fetched: Sequence[int | str] = self._page.evaluate(  # [status, text]
                     _JS_FETCH, {"url": url, "body": _json_dumps(ajax_request_body(function, args))}
                 )
+                status, text = fetched
                 return decode_ajax_response(function, int(status), str(text))
             except AuthenticationError as exc:
                 retryable = isinstance(exc, NotMoodleResponseError) or exc.errorcode in _RETRY_ERRORCODES
@@ -260,11 +306,11 @@ class _PageSession:
     # ------------------------------------------------------------------- helpers
     def _inspect(self) -> tuple[str | None, str]:
         """(sesskey if the page is authenticated Moodle, otherwise a hint for the user)."""
-        url = self._page.url
+        url: str = self._page.url
         if not is_moodle_page(url, self._cfg.base_url):
             return None, "complete the login in the browser window"
         try:
-            state = self._page.evaluate(_JS_MOODLE_STATE)
+            state: _MoodleState | None = self._page.evaluate(_JS_MOODLE_STATE)
         except self._cfg.page_error:  # page still navigating: try again later
             return None, _HINT_LOADING
         if state and state.get("loading"):
@@ -289,9 +335,9 @@ class _PageSession:
             time.sleep(seconds)
 
 
-def _restore_cookies(context: Any, cfg: _Config) -> None:
-    saved = cfg.store.load_raw(cfg.base_url) or []
-    usable = [c for c in saved if c.get("domain") and c.get("path")]
+def _restore_cookies(context: _Context, cfg: _Config) -> None:
+    saved: list[RawCookie] = cfg.store.load_raw(cfg.base_url) or []
+    usable: list[RawCookie] = [c for c in saved if c.get("domain") and c.get("path")]
     if usable:
         try:
             context.add_cookies(usable)
@@ -300,7 +346,7 @@ def _restore_cookies(context: Any, cfg: _Config) -> None:
             logger.debug("saved cookies not usable: %s", exc)
 
 
-def _save_cookies(context: Any, cfg: _Config) -> None:
+def _save_cookies(context: _Context, cfg: _Config) -> None:
     try:
         cookies: list[RawCookie] = [dict(c) for c in context.cookies(cfg.base_url)]
     except cfg.page_error as exc:
@@ -310,5 +356,5 @@ def _save_cookies(context: Any, cfg: _Config) -> None:
     logger.debug("session saved to %s", path)
 
 
-def _json_dumps(value: Any) -> str:
+def _json_dumps(value: object) -> str:
     return json.dumps(value)
