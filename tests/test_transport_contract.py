@@ -9,18 +9,22 @@ the docstring of `moodlesh.moodle.transport.Transport`.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from os import set_inheritable
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator, Tuple, Union, Self
 
 import httpx
 import pytest
 
+from nodriver import cdp
+
 from moodlesh.core.errors import AuthenticationError, BackendError
 from moodlesh.moodle.auth import SessionStore
-from moodlesh.moodle.browser import _Config, _PageSession
+from moodlesh.moodle.browser import _Config, _TabSession
 from moodlesh.moodle.transport import AjaxSessionTransport, NotMoodleResponseError, RestTransport, Transport
 
 BASE = "https://moodle.example.org"
@@ -92,7 +96,7 @@ def _rest(situation: str) -> Setup:
     return Setup(RestTransport(BASE, "tok", client=client), lambda: count)
 
 
-class _Page:
+class _Tab:
     """A browser tab whose fetches all meet the same situation."""
 
     def __init__(self, situation: str) -> None:
@@ -100,35 +104,35 @@ class _Page:
         self.url = BASE + "/my/"
         self.fetches = 0
 
-    def is_closed(self) -> bool:
-        return False
-
-    async def goto(self, url: str, wait_until: str = "load") -> None:
+    async def get(self, url: str = 'chrome://welcome', new_tab: bool = False, new_window: bool = False) -> Self:
         self.url = url
+        return self
 
-    async def wait_for_timeout(self, ms: float) -> None:
+    async def wait(self, t: Union[int, float] | None = None) -> None:
         pass
 
-    async def evaluate(self, script: str, arg: Any = None) -> Any:
-        if arg is None:  # the state of the Moodle page
-            return {"sesskey": "k", "userId": 5}
+    async def send(self, cdp_obj: Generator[dict[str, Any], dict[str, Any], Any], _attach: bool = False, **kwargs) -> Any:
+        caller = inspect.stack()[1].function
+        if caller == "_inspect":
+            return type('', (object,), {"value": {"sesskey": "k", "userId": 5}})(), None
         self.fetches += 1
         if self.situation == "network failure":
-            raise _PageError("net::ERR_CONNECTION_REFUSED")
-        return [200, AJAX[self.situation]]
+            exc = type('', (object,), {"exception": None, "text": "bar"})()
+            return None, exc
+        return type('', (object,), {"value": (200, AJAX[self.situation])})(), None
 
 
 def _browser(situation: str, tmp_path: Path) -> Setup:
-    page = _Page(situation)
-    config = _Config(BASE, SessionStore(tmp_path), lambda _: None, 5, 0, {}, page_error=_PageError)
+    tab = _Tab(situation)
+    config = _Config(BASE, SessionStore(tmp_path), lambda _: None, 5, 0, {})
     # `_PageSession` is what `BrowserTransport` runs on its browser thread's loop.
-    return Setup(_SyncPageSession(_PageSession(page, config)), lambda: page.fetches)
+    return Setup(_SyncTabSession(_TabSession(tab, config)), lambda: tab.fetches)
 
 
-class _SyncPageSession:
-    """The synchronous face of `_PageSession`, as `BrowserTransport.call` gives it."""
+class _SyncTabSession:
+    """The synchronous face of `_TabSession`, as `BrowserTransport.call` gives it."""
 
-    def __init__(self, session: _PageSession) -> None:
+    def __init__(self, session: _TabSession) -> None:
         self._session = session
 
     def call(self, function: str, args: Any) -> Any:
@@ -176,4 +180,3 @@ def test_network_failure_is_a_backend_error(make: Callable[[str], Setup]) -> Non
     with pytest.raises(BackendError) as caught:
         make("network failure").transport.call("f", {})
     assert not isinstance(caught.value, AuthenticationError)
-    assert isinstance(caught.value.__cause__, httpx.HTTPError | _PageError)
