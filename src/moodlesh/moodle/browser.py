@@ -23,9 +23,9 @@ import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from nodriver import Tab, cdp
+from nodriver import cdp
 from types import TracebackType
-from typing import Any, Final, Literal, Protocol, Self, TypeAlias, TypedDict, final
+from typing import Any, Final, Generator, Literal, Protocol, Self, TypeAlias, TypedDict, final, Union
 
 from nodriver.cdp.runtime import await_promise
 
@@ -48,6 +48,15 @@ Notify: TypeAlias = Callable[[str], None]
 """Shows a message to the user (e.g. "complete the login in the browser window")."""
 
 WaitUntil: TypeAlias = Literal["commit", "domcontentloaded", "load", "networkidle"]
+
+
+class _Tab(Protocol):
+    """The part of a nodriver async `Tab` this module uses (the tests pass a fake one)."""
+    async def get(self, url='chrome://welcome', new_tab: bool = False, new_window: bool = False) -> Self: ...
+
+    async def wait(self, t: Union[int, float] | None = None): ...
+
+    async def send(self, cdp_obj: Generator[dict[str, Any], dict[str, Any], Any], _attach: bool = False, **kwargs) -> Any: ...
 
 
 class _Context(Protocol):
@@ -217,7 +226,7 @@ class _Config:
 class _TabSession:
     """A Moodle tab and its sesskey. Used only by the browser thread's loop."""
 
-    def __init__(self, tab: Tab, cfg: _Config) -> None:
+    def __init__(self, tab: _Tab, cfg: _Config) -> None:
         self._tab = tab
         self._cfg = cfg
         self._sesskey: str | None = None
