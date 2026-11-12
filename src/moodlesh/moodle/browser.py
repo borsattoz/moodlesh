@@ -177,7 +177,17 @@ class BrowserTransport(Transport):
         try:
             browser = await uc.start(headless=False)
             try:
-                session = _TabSession(await browser.get(), cfg)
+                tab = await browser.get()
+                session = _TabSession(tab, cfg)
+
+                async def on_destroyed(ev: cdp.target.TargetDestroyed):
+                    await browser.update_targets()
+                    if tab not in browser.tabs:
+                        session.closed = True
+
+                browser.add_handler(cdp.target.TargetDestroyed, on_destroyed)
+                await browser.send(cdp.target.set_discover_targets(discover=True))
+
                 await session.ensure_ready()
                 self._stop = asyncio.Event()
                 self._session = session
@@ -230,6 +240,10 @@ class _TabSession:
         self._tab = tab
         self._cfg = cfg
         self._sesskey: str | None = None
+        self.closed: bool = False
+
+    async def is_closed(self) -> bool:
+        return self.closed
 
     async def ensure_ready(self) -> str:
         """Wait until the tab shows an authenticated Moodle page and return its sesskey.
@@ -244,6 +258,8 @@ class _TabSession:
         deadline: float = time.monotonic() + cfg.ready_timeout_s
         last_hint: str = ""
         while True:
+            if await self.is_closed():
+                raise AuthenticationError("the browser window was closed")
             state, hint = await self._inspect()
             if state is not None:
                 self._sesskey = state
