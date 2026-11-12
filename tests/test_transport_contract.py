@@ -108,7 +108,7 @@ class _Tab:
         self.url = url
         return self
 
-    async def wait(self, t: Union[int, float] | None = None) -> None:
+    async def wait(self, t: Union[int, float] = 0.5) -> None:
         pass
 
     async def send(self, cdp_obj: Generator[dict[str, Any], dict[str, Any], Any], _attach: bool = False, **kwargs) -> Any:

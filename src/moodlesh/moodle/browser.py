@@ -54,7 +54,7 @@ class _Tab(Protocol):
     """The part of a nodriver async `Tab` this module uses (the tests pass a fake one)."""
     async def get(self, url='chrome://welcome', new_tab: bool = False, new_window: bool = False) -> Self: ...
 
-    async def wait(self, t: Union[int, float] | None = None): ...
+    async def wait(self, t: Union[int, float] = 0.5): ...
 
     async def send(self, cdp_obj: Generator[dict[str, Any], dict[str, Any], Any], _attach: bool = False, **kwargs) -> Any: ...
 
@@ -276,6 +276,7 @@ class _TabSession:
             return [response.status, await response.text()];
         }})()""".format(url=json.dumps(url), body=json.dumps(json.dumps(body)))
 
+        # TODO(borsattoz): handle exceptions
         result, error = await self._tab.send(cdp.runtime.evaluate(expression=expression, await_promise=True, return_by_value=True))
         if error is not None:
             raise BackendError("browser error: {details}".format(details=error.exception.description if error.exception else error.text))
