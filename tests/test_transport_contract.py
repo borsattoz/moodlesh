@@ -11,16 +11,13 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
-from os import set_inheritable
 from pathlib import Path
-from typing import Any, Generator, Tuple, Union, Self
+from typing import Any, Self
 
 import httpx
 import pytest
-
-from nodriver import cdp
 
 from moodlesh.core.errors import AuthenticationError, BackendError
 from moodlesh.moodle.auth import SessionStore
@@ -104,22 +101,26 @@ class _Tab:
         self.url = BASE + "/my/"
         self.fetches = 0
 
-    async def get(self, url: str = 'chrome://welcome', new_tab: bool = False, new_window: bool = False) -> Self:
+    async def get(
+        self, url: str = "chrome://welcome", new_tab: bool = False, new_window: bool = False
+    ) -> Self:
         self.url = url
         return self
 
-    async def wait(self, t: Union[int, float] = 0.5) -> None:
+    async def wait(self, t: int | float = 0.5) -> None:
         pass
 
-    async def send(self, cdp_obj: Generator[dict[str, Any], dict[str, Any], Any], _attach: bool = False, **kwargs) -> Any:
+    async def send(
+        self, cdp_obj: Generator[dict[str, Any], dict[str, Any], Any], _attach: bool = False, **kwargs
+    ) -> Any:
         caller = inspect.stack()[1].function
         if caller == "_inspect":
-            return type('', (object,), {"value": {"sesskey": "k", "userId": 5}})(), None
+            return type("", (object,), {"value": {"sesskey": "k", "userId": 5}})(), None
         self.fetches += 1
         if self.situation == "network failure":
-            exc = type('', (object,), {"exception": None, "text": "bar"})()
+            exc = type("", (object,), {"exception": None, "text": "bar"})()
             return None, exc
-        return type('', (object,), {"value": (200, AJAX[self.situation])})(), None
+        return type("", (object,), {"value": (200, AJAX[self.situation])})(), None
 
 
 def _browser(situation: str, tmp_path: Path) -> Setup:

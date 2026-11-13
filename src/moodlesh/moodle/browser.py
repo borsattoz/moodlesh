@@ -15,24 +15,21 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-import dataclasses
 import json
 import logging
-import nodriver as uc
 import threading
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass
-from nodriver import cdp
 from types import TracebackType
-from typing import Any, Final, Generator, Literal, Protocol, Self, TypeAlias, TypedDict, final, Union
+from typing import Any, Final, Literal, Protocol, Self, TypeAlias, TypedDict, final
 
-from nodriver.cdp.runtime import await_promise
+import nodriver as uc
+from nodriver import cdp
 
 from moodlesh.core.errors import AuthenticationError, BackendError
 from moodlesh.moodle.auth import RawCookie, SessionStore, is_moodle_page
 from moodlesh.moodle.transport import (
-    NotMoodleResponseError,
     Transport,
     ajax_request_body,
     decode_ajax_response,
@@ -52,11 +49,19 @@ WaitUntil: TypeAlias = Literal["commit", "domcontentloaded", "load", "networkidl
 
 class _Tab(Protocol):
     """The part of a nodriver async `Tab` this module uses (the tests pass a fake one)."""
-    async def get(self, url='chrome://welcome', new_tab: bool = False, new_window: bool = False) -> Self: ...
 
-    async def wait(self, t: Union[int, float] = 0.5): ...
+    async def get(
+        self, url: str = "chrome://welcome", new_tab: bool = False, new_window: bool = False
+    ) -> Self: ...
 
-    async def send(self, cdp_obj: Generator[dict[str, Any], dict[str, Any], Any], _attach: bool = False, **kwargs) -> Any: ...
+    async def wait(self, t: int | float = 0.5) -> None: ...
+
+    async def send(
+        self, cdp_obj: Generator[dict[str, Any], dict[str, Any], Any], _attach: bool = False, **kwargs: Any
+    ) -> Any: ...
+
+    @property
+    def url(self) -> str: ...
 
 
 class _Context(Protocol):
@@ -152,7 +157,7 @@ class BrowserTransport(Transport):
 
     def call(self, function: str, args: Mapping[str, Any]) -> Any:
         loop, session = self._loop, self._session
-        if loop is None or session is None or not self._thread.is_alive():
+        if loop is None or session is None or session.is_closed() or not self._thread.is_alive():
             raise BackendError("the browser is no longer available", function=function)
         with self._calls:
             future = asyncio.run_coroutine_threadsafe(session.call(function, dict(args)), loop)
@@ -180,7 +185,7 @@ class BrowserTransport(Transport):
                 tab = await browser.get()
                 session = _TabSession(tab, cfg)
 
-                async def on_destroyed(ev: cdp.target.TargetDestroyed):
+                async def on_destroyed(ev: cdp.target.TargetDestroyed) -> None:
                     await browser.update_targets()
                     if tab not in browser.tabs:
                         session.closed = True
@@ -197,7 +202,7 @@ class BrowserTransport(Transport):
             finally:
                 browser.stop()
 
-            #async with async_playwright() as p:
+            # async with async_playwright() as p:
             #    browser = await p.chromium.launch(headless=False, **cfg.launch_options)
             #    try:
             #        context = await browser.new_context()
@@ -242,7 +247,7 @@ class _TabSession:
         self._sesskey: str | None = None
         self.closed: bool = False
 
-    async def is_closed(self) -> bool:
+    def is_closed(self) -> bool:
         return self.closed
 
     async def ensure_ready(self) -> str:
@@ -258,7 +263,7 @@ class _TabSession:
         deadline: float = time.monotonic() + cfg.ready_timeout_s
         last_hint: str = ""
         while True:
-            if await self.is_closed():
+            if self.is_closed():
                 raise AuthenticationError("the browser window was closed")
             state, hint = await self._inspect()
             if state is not None:
@@ -282,20 +287,24 @@ class _TabSession:
         url: str = f"{self._cfg.base_url}/lib/ajax/service.php?sesskey={sesskey}&info={function}"
         body = ajax_request_body(function, args)
         logger.debug("AJAX (browser) %s %s", function, args)
-        expression = """(async () => {{
-            const response = await fetch({url}, {{
+        expression = f"""(async () => {{
+            const response = await fetch({json.dumps(url)}, {{
             method: "POST",
             credentials: "same-origin",
             headers: {{"Content-Type": "application/json"}},
-            body: {body}
+            body: {json.dumps(json.dumps(body))}
             }});
             return [response.status, await response.text()];
-        }})()""".format(url=json.dumps(url), body=json.dumps(json.dumps(body)))
+        }})()"""
 
         # TODO(borsattoz): handle exceptions
-        result, error = await self._tab.send(cdp.runtime.evaluate(expression=expression, await_promise=True, return_by_value=True))
+        result, error = await self._tab.send(
+            cdp.runtime.evaluate(expression=expression, await_promise=True, return_by_value=True)
+        )
         if error is not None:
-            raise BackendError("browser error: {details}".format(details=error.exception.description if error.exception else error.text))
+            raise BackendError(
+                f"browser error: {error.exception.description if error.exception else error.text}"
+            )
 
         status, text = result.value
         return decode_ajax_response(function, int(status), str(text))
@@ -307,9 +316,13 @@ class _TabSession:
         if not is_moodle_page(url, self._cfg.base_url):
             return None, "complete the login in the browser window"
 
-        result, error = await self._tab.send(cdp.runtime.evaluate(expression=_JS_MOODLE_STATE, await_promise=True, return_by_value=True))
+        result, error = await self._tab.send(
+            cdp.runtime.evaluate(expression=_JS_MOODLE_STATE, await_promise=True, return_by_value=True)
+        )
         if error is not None:
-            raise BackendError("browser error: {details}".format(details=error.exception.description if error.exception else error.text))
+            raise BackendError(
+                f"browser error: {error.exception.description if error.exception else error.text}"
+            )
 
         state: _MoodleState | _Loading | None = result.value
         if state is None:
@@ -350,4 +363,3 @@ async def _save_cookies(context: _Context, cfg: _Config) -> None:
         return
     path = cfg.store.save_raw(cfg.base_url, cookies)
     logger.debug("session saved to %s", path)
-
