@@ -1,4 +1,4 @@
-"""Tests of the browser transport logic, with a fake page instead of Playwright.
+"""Tests of the browser transport logic, with a fake page instead of nodriver.
 
 `_PageSession` is async (it runs on the browser thread's loop): each test runs
 it with `asyncio.run`.

@@ -1,4 +1,4 @@
-"""Transport that calls Moodle from inside a real browser (Playwright).
+"""Transport that calls Moodle from inside a real browser (nodriver).
 
 It is needed when the site sits behind an anti-bot check (e.g. Cloudflare) that
 blocks HTTP clients: requests are sent from the Moodle page open in Chromium,
@@ -64,6 +64,7 @@ class _Tab(Protocol):
     def url(self) -> str: ...
 
 
+# TODO(borsattoz) manage cookies with nodriver
 class _Context(Protocol):
     """The part of a Playwright async `BrowserContext` this module uses."""
 
@@ -233,7 +234,7 @@ class _Config:
     ready_timeout_s: float
     poll_interval_s: float
     launch_options: dict[str, Any]
-    # Errors raised by the page (Playwright's `Error`): only these are treated as
+    # Errors raised by the page: only these are treated as
     # "the page is navigating or closed". Anything else is a bug and propagates.
     page_error: type[Exception] = Exception
 

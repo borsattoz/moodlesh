@@ -28,12 +28,6 @@ special cases.
   first write* (`MoodleBackend.check_writable`). A permission problem must
   never leave a half-made change. (Learned on a real site: a teacher's `mkdir`
   created a section, then failed to rename it.)
-- **Never retry an error returned by Moodle**: it may come from a write. Only
-  transport problems are retried, once: invalid sesskey, a non-JSON response
-  (login page or bot check), a Playwright error (`_Config.page_error`). The
-  full contract of a transport is in the docstring of `Transport`;
-  `tests/test_transport_contract.py` runs the same situations through every
-  transport, so a new transport must be added there.
 - **Never bypass bot protection** (no TLS spoofing, no copying `cf_clearance`
   into httpx, no headless tricks). The browser transport sends requests with
   `fetch` from a real, visible Chromium window; the user passes any check.
@@ -112,7 +106,7 @@ Moodle error codes (verified on 4.5):
 - `core/`: immutable dataclasses, the `CourseBackend` protocol, positioning
   rules, exceptions. Depends on nothing else in the package.
 - `moodle/`: one `MoodleBackend` over interchangeable transports.
-  `BrowserTransport` (default) runs Playwright's **async** API on its own
+  `BrowserTransport` (default) runs nodriver's **async** API on its own
   asyncio loop in a **dedicated thread**, so it never touches prompt_toolkit's
   loop; `call()` submits a coroutine with `run_coroutine_threadsafe` and waits. `AjaxSessionTransport`
   (httpx) and `RestTransport` (token) share request/response handling

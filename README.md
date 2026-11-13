@@ -69,7 +69,6 @@ You need Python 3.11 or later. Install moodlesh and the browser it uses:
 
 ```bash
 uv tool install git+https://github.com/borsattoz/moodlesh.git
-"$(uv tool dir)/moodlesh/bin/playwright" install chromium
 ```
 
 Then explore some sample courses, with no Moodle site involved:
@@ -148,7 +147,6 @@ virtual environment:
 
 ```bash
 pip install git+https://github.com/borsattoz/moodlesh.git
-playwright install chromium
 ```
 
 ## Getting started

@@ -82,8 +82,7 @@ class Transport(Protocol):
     - an invalid session or token raises `AuthenticationError`;
     - a response that does not come from Moodle (an HTML page, a bot check)
       raises `NotMoodleResponseError`;
-    - a network or browser failure raises `BackendError`, never an httpx or
-      Playwright exception;
+    - a network or browser failure raises `BackendError`, never an httpx exception;
     - only problems that guarantee Moodle did not run the function may be
       retried, once: an invalid sesskey (Moodle checks it before running the
       function) or, in the browser, a response that is not from Moodle.

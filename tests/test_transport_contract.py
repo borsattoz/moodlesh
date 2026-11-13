@@ -59,10 +59,6 @@ class Setup:
     calls: Callable[[], int]
 
 
-class _PageError(Exception):
-    """Stands for Playwright's `Error` in the browser transport."""
-
-
 def _ajax(situation: str) -> Setup:
     count = 0
 

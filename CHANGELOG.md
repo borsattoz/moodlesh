@@ -24,7 +24,7 @@ Nothing has been released yet. This section describes what the first release,
   with the same permission checks as a real run.
 - Change journal: every write, successful or not, is appended to
   `changes.jsonl` in the state directory (or `$MOODLESH_JOURNAL`).
-- Transports: browser (default; Playwright, works with SSO and security
+- Transports: browser (default; nodriver, works with SSO and security
   checks passed by the user), HTTP with a saved session, REST with a token.
 - `moodlesh login` (browser, or `--password` for manual accounts) and
   `moodlesh logout` (ends the session on Moodle when possible).
@@ -62,7 +62,7 @@ Nothing has been released yet. This section describes what the first release,
   `http` is now an error instead of being silently preferred, and `rest`
   without a token says what is missing.
 
-- The browser transport runs Playwright's async API on its own asyncio loop
+- The browser transport runs nodriver's async API on its own asyncio loop
   (still in a dedicated thread, so nothing changes for the rest of moodlesh).
 
 ### Security
