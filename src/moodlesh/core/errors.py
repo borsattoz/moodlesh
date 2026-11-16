@@ -35,6 +35,20 @@ class AuthenticationError(BackendError):
     """Expired session, or invalid sesskey or token."""
 
 
+class ConnectionLostError(BackendError):
+    """The connection to Moodle cannot work again in this run.
+
+    For example the browser was closed, or the saved session or the token is
+    no longer valid. Only connecting again (`moodlesh login`, a new token, a
+    new run) can fix it, so an interactive shell should stop instead of
+    failing at every command.
+    """
+
+
+class SessionExpiredError(AuthenticationError, ConnectionLostError):
+    """The saved session or the token is no longer valid, and cannot be renewed from here."""
+
+
 class PartialChangeError(BackendError):
     """An operation stopped after it had already changed Moodle.
 

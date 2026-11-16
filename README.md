@@ -242,6 +242,12 @@ not exist), execution stops at that line and the error is reported.
 Exit codes: `0` success; `1` an error while running, or a cancelled run; `2` a
 mistake in the script or in the options.
 
+In the interactive shell, an error leaves you at the prompt so you can try
+something else. The exception is a connection to Moodle that cannot work
+again (an expired session or token, a closed browser window): moodlesh says so
+and leaves the shell with exit code `1`. Log in again, or start moodlesh again,
+to continue.
+
 ## Running a script on several courses
 
 `run` and `exec` accept options that select courses. The script runs once per
@@ -260,7 +266,9 @@ Courses given with `--course` are always included.
 moodlesh lists the selected courses and asks for confirmation. `-y`/`--yes`
 skips the question, and is required when there is no terminal (for example in
 a scheduled job). The run stops at the first course that fails and skips the
-rest, unless `--keep-going` is given. A summary is printed at the end.
+rest, unless `--keep-going` is given. A summary is printed at the end. If the
+connection to Moodle is lost for good (an expired session or token, a closed
+browser window), the run stops anyway: every remaining course would fail too.
 
 ## Dry runs and the change journal
 

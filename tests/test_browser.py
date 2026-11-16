@@ -16,7 +16,7 @@ from typing import Any, Self
 
 import pytest
 
-from moodlesh.core.errors import AuthenticationError, BackendError
+from moodlesh.core.errors import AuthenticationError, BackendError, ConnectionLostError
 from moodlesh.moodle.auth import SessionStore
 from moodlesh.moodle.browser import _Config, _TabSession
 
@@ -128,7 +128,7 @@ def test_ready_timeout(tmp_path: Path) -> None:
     sess.inner._cfg = _Config(
         BASE, SessionStore(tmp_path), lambda _: None, ready_timeout_s=0, poll_interval_s=0, launch_options={}
     )
-    with pytest.raises(AuthenticationError, match="within 0 seconds"):
+    with pytest.raises(ConnectionLostError, match="within 0 seconds"):
         sess.ensure_ready()
 
 

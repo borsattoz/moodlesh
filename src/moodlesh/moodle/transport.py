@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from moodlesh.core.errors import AuthenticationError, BackendError
+from moodlesh.core.errors import AuthenticationError, BackendError, SessionExpiredError
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,12 @@ class Transport(Protocol):
 
     - an error returned by Moodle raises `BackendError`, with Moodle's
       `errorcode`, and the call is **never retried**: it may have been a write;
-    - an invalid session or token raises `AuthenticationError`;
+    - an invalid session or token raises `AuthenticationError`; when the
+      transport cannot recover from it (the saved session or the token is
+      no longer valid), `SessionExpiredError`, which is also a
+      `ConnectionLostError`;
+    - a transport that can no longer work at all (for example the browser was
+      closed) raises `ConnectionLostError`, so that the shell can stop;
     - a response that does not come from Moodle (an HTML page, a bot check)
       raises `NotMoodleResponseError`;
     - a network or browser failure raises `BackendError`, never an httpx exception;
@@ -125,9 +130,9 @@ class AjaxSessionTransport(Transport):
         logger.debug("page for the sesskey: %s", landed)
         match = _SESSKEY_RE.search(response.text)
         if match is None:
-            raise AuthenticationError(f"session not authenticated: /my/ leads to {landed}")
+            raise SessionExpiredError(f"session not authenticated: /my/ leads to {landed}")
         if '"userId":0' in response.text.replace(" ", ""):
-            raise AuthenticationError(f"guest session, not authenticated: /my/ leads to {landed}")
+            raise SessionExpiredError(f"guest session, not authenticated: /my/ leads to {landed}")
         return match.group(1)
 
     def call(self, function: str, args: Mapping[str, Any]) -> Any:
@@ -148,7 +153,10 @@ class AjaxSessionTransport(Transport):
             params={"sesskey": self.sesskey, "info": function},
             json=ajax_request_body(function, args),
         )
-        return decode_ajax_response(function, response.status_code, response.text)
+        # A saved session cannot be renewed from here: an invalid session is final.
+        return decode_ajax_response(
+            function, response.status_code, response.text, auth_error=SessionExpiredError
+        )
 
 
 def ajax_request_body(function: str, args: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -156,12 +164,21 @@ def ajax_request_body(function: str, args: Mapping[str, Any]) -> list[dict[str, 
     return [{"index": 0, "methodname": function, "args": dict(args)}]
 
 
-def decode_ajax_response(function: str, status: int, text: str) -> Any:
+def decode_ajax_response(
+    function: str,
+    status: int,
+    text: str,
+    *,
+    auth_error: type[AuthenticationError] = AuthenticationError,
+) -> Any:
     """Interpret a `lib/ajax/service.php` response (shared by all AJAX transports).
+
+    `auth_error` is the class raised for an invalid session or sesskey: a
+    transport that cannot recover from it passes `SessionExpiredError`.
 
     Raises:
         NotMoodleResponseError: the response does not come from Moodle (HTML page, anti-bot check...).
-        AuthenticationError: invalid session or sesskey.
+        AuthenticationError: invalid session or sesskey (`auth_error`).
         BackendError: error returned by the function.
     """
     try:
@@ -172,12 +189,12 @@ def decode_ajax_response(function: str, status: int, text: str) -> Any:
         ) from None
     # A global error (e.g. invalid sesskey) arrives as an object, not as a list.
     if isinstance(payload, dict):
-        _raise_error(function, payload, _AJAX_AUTH_ERRORS)
+        _raise_error(function, payload, _AJAX_AUTH_ERRORS, auth_error)
     if status != httpx.codes.OK or not isinstance(payload, list) or not payload:
         raise BackendError(f"unexpected response (HTTP {status})", function=function)
     result = payload[0]
     if result.get("error"):
-        _raise_error(function, result.get("exception") or {}, _AJAX_AUTH_ERRORS)
+        _raise_error(function, result.get("exception") or {}, _AJAX_AUTH_ERRORS, auth_error)
     return result.get("data")
 
 
@@ -230,7 +247,8 @@ class RestTransport(Transport):
         if isinstance(payload, dict) and "exception" in payload:
             if payload.get("errorcode") == "accessexception":
                 raise _access_denied(function, payload)
-            _raise_error(function, payload, _REST_AUTH_ERRORS)
+            # A token cannot be renewed from here: an invalid token is final.
+            _raise_error(function, payload, _REST_AUTH_ERRORS, SessionExpiredError)
         return payload
 
 
@@ -285,10 +303,15 @@ def _access_denied(function: str, error: Mapping[str, Any]) -> BackendError:
     )
 
 
-def _raise_error(function: str, error: Mapping[str, Any], auth_codes: frozenset[str]) -> None:
+def _raise_error(
+    function: str,
+    error: Mapping[str, Any],
+    auth_codes: frozenset[str],
+    auth_error: type[AuthenticationError] = AuthenticationError,
+) -> None:
     errorcode = error.get("errorcode")
     # Function errors carry "message"; global AJAX errors put the text in "error".
     candidates = (error.get("message"), error.get("error"), error.get("exception"))
     message = next((c for c in candidates if isinstance(c, str) and c), "unknown error")
-    cls = AuthenticationError if errorcode in auth_codes else BackendError
+    cls: type[BackendError] = auth_error if errorcode in auth_codes else BackendError
     raise cls(str(message), function=function, errorcode=errorcode)

@@ -19,6 +19,7 @@ from moodlesh.cli.errors import ExitRequested, UsageError
 from moodlesh.cli.interpreter import Interpreter, ScriptError
 from moodlesh.cli.navigation import Location
 from moodlesh.core.backend import CourseBackend
+from moodlesh.core.errors import ConnectionLostError
 from moodlesh.core.models import CourseSummary
 
 
@@ -83,7 +84,10 @@ def run_on_courses(
     dry_run: bool = False,
     keep_going: bool = False,
 ) -> list[CourseOutcome]:
-    """Run `text` on each course; stop at the first failing course unless `keep_going`."""
+    """Run `text` on each course; stop at the first failing course unless `keep_going`.
+
+    A lost connection (`ConnectionLostError`) stops the run even with `keep_going`.
+    """
     outcomes: list[CourseOutcome] = []
     for index, course in enumerate(courses):
         emit(Rule(f"{course.shortname} · {course.fullname}", align="left", style="dim"))
@@ -96,7 +100,8 @@ def run_on_courses(
         except ScriptError as exc:
             emit(Text(f"error: {exc}", style="bold red"))
             outcomes.append(CourseOutcome(course, error=exc))
-            if not keep_going:
+            # A lost connection would make every remaining course fail too.
+            if not keep_going or isinstance(exc.cause, ConnectionLostError):
                 outcomes.extend(CourseOutcome(c, skipped=True) for c in courses[index + 1 :])
                 break
             continue

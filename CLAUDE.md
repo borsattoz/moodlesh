@@ -96,7 +96,10 @@ Moodle error codes (verified on 4.5):
 
 - `servicerequireslogin`, `invalidsesskey`: session not valid →
   `AuthenticationError`. Global errors carry their text in `error`;
-  `invalidsesskey` arrives as a list.
+  `invalidsesskey` arrives as a list. The `http` and `rest` transports cannot
+  renew a session or a token, so they raise `SessionExpiredError` (an
+  `AuthenticationError` that is also a `ConnectionLostError`); the browser
+  transport waits for a new login instead.
 - `requireloginerror` inside a function: course not accessible. **Not** an
   authentication error.
 - `nopermissions`: also raised by moodlesh in `check_writable`.
@@ -126,6 +129,11 @@ Moodle error codes (verified on 4.5):
   gets dry-run only. An operation that stops after its first write raises
   `PartialChangeError` (with the created section, if known), which the journal
   records as `"partial": true`.
+- `ConnectionLostError` means the transport can never work again in this run
+  (session or token no longer valid, browser closed): the shell reports it
+  and exits with code 1, and bulk runs stop even with `--keep-going`. Raise it
+  only when retrying cannot help; every other `BackendError` keeps the shell
+  open.
 - `cli/bulk.py`: one `Interpreter` per course, starting at that course; stop
   at the first failing course unless `--keep-going`; confirmation unless
   `--dry-run` or `--yes`; refused without a TTY (exit 2).
