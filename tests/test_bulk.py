@@ -10,6 +10,7 @@ from rich.console import RenderableType
 from moodlesh.cli.bulk import CourseSelection, run_on_courses, select_courses, summary_table
 from moodlesh.cli.errors import UsageError
 from moodlesh.cli.main import EXIT_ERROR, EXIT_OK, EXIT_USAGE, main
+from moodlesh.core.errors import ConnectionLostError
 from moodlesh.memory import InMemoryBackend
 
 from conftest import as_text
@@ -118,3 +119,15 @@ def test_cli_bulk_reports_failures(capsys: pytest.CaptureFixture[str]) -> None:
     )
     assert code == EXIT_ERROR
     assert "1 of 2 courses ok" in capsys.readouterr().out
+
+
+def test_lost_connection_stops_even_with_keep_going(
+    backend: InMemoryBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def lost(course_id: int) -> object:
+        raise ConnectionLostError("the browser closed")
+
+    courses = select_courses(backend, CourseSelection(courses=("CALC1", "PHY1")))
+    monkeypatch.setattr(backend, "get_course", lost)
+    outcomes = run_on_courses(backend, "ls", courses, emit=lambda _: None, keep_going=True)
+    assert [(o.ok, o.skipped) for o in outcomes] == [(False, False), (False, True)]

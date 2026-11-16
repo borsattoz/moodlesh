@@ -13,7 +13,8 @@ from rich.text import Text
 from moodlesh.cli.completion import DslCompleter
 from moodlesh.cli.errors import DslSyntaxError, ExitRequested
 from moodlesh.cli.interpreter import Interpreter, ScriptError
-from moodlesh.core.errors import AuthenticationError, MoodleshError
+from moodlesh.cli.navigation import ROOT
+from moodlesh.core.errors import AuthenticationError, ConnectionLostError, MoodleshError, NotFoundError
 
 
 def report_error(console: Console, exc: MoodleshError) -> None:
@@ -30,8 +31,18 @@ def report_error(console: Console, exc: MoodleshError) -> None:
         console.print(Text("hint: run `moodlesh login` again", style="yellow"))
 
 
+def connection_lost(exc: MoodleshError) -> bool:
+    """Whether `exc` means the connection to Moodle cannot work again in this run."""
+    cause = exc.cause if isinstance(exc, ScriptError) else exc
+    return isinstance(cause, ConnectionLostError)
+
+
 def run_repl(interpreter: Interpreter, console: Console, history_file: Path | None = None) -> int:
-    """Read-eval-print loop. Returns the exit code."""
+    """Read-eval-print loop. Returns the exit code.
+
+    The shell ends with exit code 1 when the connection to Moodle is lost for
+    good (`ConnectionLostError`): every later command would fail too.
+    """
     history: History = InMemoryHistory()
     if history_file is not None:
         history_file.parent.mkdir(parents=True, exist_ok=True)
@@ -44,10 +55,18 @@ def run_repl(interpreter: Interpreter, console: Console, history_file: Path | No
     )
     console.print(Text("moodlesh — type help for the list of commands, exit to quit", style="dim"))
 
+    last_problem: str | None = None
     while True:
+        path, problem = _safe_prompt_path(interpreter)
+        # Show a problem once, not again at every prompt while it lasts.
+        if problem is not None and str(problem) != last_problem:
+            report_error(console, problem)
+        if problem is not None and connection_lost(problem):
+            return _leave(console)
+        last_problem = None if problem is None else str(problem)
         try:
             mode = "[dry-run]" if interpreter.dry_run else ""
-            prompt = f"moodle{mode}:{_safe_prompt_path(interpreter)}> "
+            prompt = f"moodle{mode}:{path}> "
             line = session.prompt(prompt)
         except KeyboardInterrupt:
             continue
@@ -60,11 +79,27 @@ def run_repl(interpreter: Interpreter, console: Console, history_file: Path | No
             return 0
         except MoodleshError as exc:
             report_error(console, exc)
+            if connection_lost(exc):
+                return _leave(console)
 
 
-def _safe_prompt_path(interpreter: Interpreter) -> str:
+def _leave(console: Console) -> int:
+    console.print(Text("the connection to Moodle is lost: leaving the shell", style="yellow"))
+    return 1
+
+
+def _safe_prompt_path(interpreter: Interpreter) -> tuple[str, MoodleshError | None]:
+    """The path for the prompt, and the problem met while building it, if any.
+
+    Building the path may ask Moodle for the course, and that can fail. A
+    course that no longer exists (or is no longer accessible) sends the shell
+    back to the list of courses. Any other problem (session, network) keeps the
+    current location, so that the next prompt simply tries again.
+    """
     try:
-        return interpreter.prompt_path()
-    except MoodleshError:
-        interpreter.cwd = interpreter.cwd.parent()
-        return "?"
+        return interpreter.prompt_path(), None
+    except NotFoundError as exc:
+        interpreter.cwd = ROOT
+        return interpreter.prompt_path(), exc  # the root needs nothing from Moodle
+    except MoodleshError as exc:
+        return "?", exc

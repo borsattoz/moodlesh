@@ -6,11 +6,12 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 
-from moodlesh.core.errors import AuthenticationError, BackendError
+from moodlesh.core.errors import AuthenticationError, BackendError, ConnectionLostError
 from moodlesh.moodle.transport import (
     AjaxSessionTransport,
     NotMoodleResponseError,
     RestTransport,
+    decode_ajax_response,
     flatten_params,
 )
 
@@ -202,3 +203,41 @@ def test_rest_invalid_token_is_still_an_authentication_error() -> None:
     invalid = {"exception": "moodle_exception", "errorcode": "invalidtoken", "message": "Invalid token"}
     with pytest.raises(AuthenticationError):
         _rest_answering(invalid).call("f", {})
+
+
+# A saved session or a token cannot be renewed from inside moodlesh: when it is
+# no longer valid, the transport says the connection is lost for good.
+def test_ajax_expired_session_means_the_connection_is_lost(server: FakeAjaxServer) -> None:
+    server.logged_in = False
+    with pytest.raises(ConnectionLostError):
+        ajax(server).call("f", {})
+
+
+def test_ajax_session_rejected_by_moodle_means_the_connection_is_lost(server: FakeAjaxServer) -> None:
+    server.next_result = {"error": "Your session has timed out", "errorcode": "servicerequireslogin"}
+    with pytest.raises(ConnectionLostError) as caught:
+        ajax(server).call("f", {})
+    assert isinstance(caught.value, AuthenticationError)  # still an authentication problem
+    assert caught.value.errorcode == "servicerequireslogin"
+
+
+def test_ajax_function_error_does_not_mean_the_connection_is_lost(server: FakeAjaxServer) -> None:
+    server.next_result = {"error": True, "exception": {"message": "No", "errorcode": "nopermissions"}}
+    with pytest.raises(BackendError) as caught:
+        ajax(server).call("f", {})
+    assert not isinstance(caught.value, ConnectionLostError)
+
+
+def test_rest_invalid_token_means_the_connection_is_lost() -> None:
+    invalid = {"exception": "moodle_exception", "errorcode": "invalidtoken", "message": "Invalid token"}
+    with pytest.raises(ConnectionLostError):
+        _rest_answering(invalid).call("f", {})
+
+
+def test_decoded_invalid_session_is_recoverable_by_default() -> None:
+    # The browser transport can wait for a new login, so by default an invalid
+    # session is a plain authentication error.
+    text = json.dumps({"error": "Your session has timed out", "errorcode": "servicerequireslogin"})
+    with pytest.raises(AuthenticationError) as caught:
+        decode_ajax_response("f", 200, text)
+    assert not isinstance(caught.value, ConnectionLostError)

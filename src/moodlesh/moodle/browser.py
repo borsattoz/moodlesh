@@ -27,7 +27,7 @@ from typing import Any, Final, Literal, Protocol, Self, TypeAlias, TypedDict, fi
 import nodriver as uc
 from nodriver import cdp
 
-from moodlesh.core.errors import AuthenticationError, BackendError
+from moodlesh.core.errors import ConnectionLostError
 from moodlesh.moodle.auth import RawCookie, SessionStore, is_moodle_page
 from moodlesh.moodle.transport import (
     Transport,
@@ -159,13 +159,13 @@ class BrowserTransport(Transport):
     def call(self, function: str, args: Mapping[str, Any]) -> Any:
         loop, session = self._loop, self._session
         if loop is None or session is None or session.is_closed() or not self._thread.is_alive():
-            raise BackendError("the browser is no longer available", function=function)
+            raise ConnectionLostError("the browser is no longer available", function=function)
         with self._calls:
             future = asyncio.run_coroutine_threadsafe(session.call(function, dict(args)), loop)
             try:
                 return future.result()
             except concurrent.futures.CancelledError:  # the loop stopped: the browser closed
-                raise BackendError("the browser closed", function=function) from None
+                raise ConnectionLostError("the browser closed", function=function) from None
 
     def close(self) -> None:
         """Save the session and close the browser."""
@@ -265,7 +265,7 @@ class _TabSession:
         last_hint: str = ""
         while True:
             if self.is_closed():
-                raise AuthenticationError("the browser window was closed")
+                raise ConnectionLostError("the browser window was closed")
             state, hint = await self._inspect()
             if state is not None:
                 self._sesskey = state
@@ -278,7 +278,7 @@ class _TabSession:
                     cfg.notify(hint)
                 last_hint = hint
             if time.monotonic() > deadline:
-                raise AuthenticationError(
+                raise ConnectionLostError(
                     f"Moodle not reachable within {cfg.ready_timeout_s:.0f} seconds: {hint}"
                 )
             await self._wait(cfg.poll_interval_s)
@@ -303,7 +303,7 @@ class _TabSession:
             cdp.runtime.evaluate(expression=expression, await_promise=True, return_by_value=True)
         )
         if error is not None:
-            raise BackendError(
+            raise ConnectionLostError(
                 f"browser error: {error.exception.description if error.exception else error.text}"
             )
 
@@ -321,7 +321,7 @@ class _TabSession:
             cdp.runtime.evaluate(expression=_JS_MOODLE_STATE, await_promise=True, return_by_value=True)
         )
         if error is not None:
-            raise BackendError(
+            raise ConnectionLostError(
                 f"browser error: {error.exception.description if error.exception else error.text}"
             )
 

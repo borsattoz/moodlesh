@@ -65,6 +65,18 @@ Nothing has been released yet. This section describes what the first release,
 - The browser transport runs nodriver's async API on its own asyncio loop
   (still in a dedicated thread, so nothing changes for the rest of moodlesh).
 
+- The shell no longer hides a problem met while showing the prompt (an
+  expired session, a network failure): it reports it once and keeps the
+  current location, so the next prompt simply tries again. Only a course that
+  no longer exists, or is no longer accessible, sends it back to the list of
+  courses.
+- When the connection to Moodle cannot work again (an expired session or
+  token with the `http` or `rest` transport, a closed browser window), the
+  shell says so and exits with code 1 instead of failing at every command,
+  and a bulk run stops even with `--keep-going`. Other errors still leave the
+  shell open. In the library, transports raise `ConnectionLostError` for this
+  (`SessionExpiredError` for an invalid session or token).
+
 ### Security
 
 - `moodlesh login --password` (and `login_with_password` in the library)
