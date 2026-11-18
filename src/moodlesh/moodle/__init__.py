@@ -5,8 +5,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+import httpx
+
 from moodlesh.core.errors import AuthenticationError
-from moodlesh.moodle.auth import SessionStore, end_server_session, login_with_password, verify_session
+from moodlesh.moodle.auth import (
+    SessionStore,
+    end_server_session,
+    login_with_password,
+    verify_session,
+)
 from moodlesh.moodle.browser import BrowserTransport, Notify
 from moodlesh.moodle.client import MoodleBackend
 from moodlesh.moodle.transport import AjaxSessionTransport, RestTransport, Transport
@@ -48,10 +55,10 @@ def connect_with_session(
 ) -> MoodleBackend:
     """HTTP backend using the saved session (sites without anti-bot checks)."""
     store = store or SessionStore()
-    cookies = store.load(base_url)
-    if cookies is None:
+    saved = store.load_cookies(base_url)
+    if saved is None:
         raise AuthenticationError(f"no saved session for {base_url}: run `moodlesh login` first")
-    return MoodleBackend(AjaxSessionTransport(base_url, cookies), editable_only=editable_only)
+    return MoodleBackend(AjaxSessionTransport(base_url, httpx.Cookies(saved)), editable_only=editable_only)
 
 
 def connect_with_token(base_url: str, token: str, *, editable_only: bool = True) -> MoodleBackend:

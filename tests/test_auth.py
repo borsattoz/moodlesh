@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+from http.cookiejar import Cookie, LWPCookieJar
 from pathlib import Path
 
 import httpx
@@ -46,13 +48,13 @@ def test_session_store_roundtrip_with_private_permissions(tmp_path: Path) -> Non
     cookies = httpx.Cookies()
     cookies.set("MoodleSession", "abc", domain="moodle.example.org", path="/")
 
-    path = store.save(BASE, cookies)
+    path = store.save_cookies(BASE, cookies.jar)
     assert path.stat().st_mode & 0o777 == 0o600
-    loaded = store.load(BASE)
+    loaded = store.load_cookies(BASE)
     assert loaded is not None
-    assert loaded.get("MoodleSession") == "abc"
+    assert httpx.Cookies(loaded).get("MoodleSession") == "abc"
     assert store.delete(BASE)
-    assert store.load(BASE) is None
+    assert store.load_cookies(BASE) is None
 
 
 def _client(
@@ -123,7 +125,7 @@ def test_session_store_tightens_existing_file(tmp_path: Path) -> None:
     path = store.path_for(BASE)
     path.write_text("[]")
     path.chmod(0o644)
-    store.save_raw(BASE, [])
+    store.save_cookies(BASE, [])
     assert path.stat().st_mode & 0o777 == 0o600
 
 
@@ -260,3 +262,121 @@ def test_login_with_password_reports_network_errors() -> None:
     client = httpx.Client(transport=httpx.MockTransport(unreachable))
     with pytest.raises(AuthenticationError, match="cannot reach"):
         login_with_password(BASE, "alice", "right", client=client)
+
+
+# --------------------------------------------------------------------------- #
+# The session file
+# --------------------------------------------------------------------------- #
+LATER = int(time.time()) + 3600
+
+
+def _cookie(
+    name: str = "MoodleSession",
+    *,
+    domain: str = "moodle.example.org",
+    expires: int | None = None,
+    secure: bool = True,
+    http_only: bool = True,
+    same_site: str | None = "Lax",
+) -> Cookie:
+    rest: dict[str, str] = {}
+    if http_only:
+        rest["HttpOnly"] = ""
+    if same_site is not None:
+        rest["SameSite"] = same_site
+    return Cookie(
+        version=0,
+        name=name,
+        value="abc",
+        port=None,
+        port_specified=False,
+        domain=domain,
+        domain_specified=True,
+        domain_initial_dot=domain.startswith("."),
+        path="/",
+        path_specified=True,
+        secure=secure,
+        expires=expires,
+        discard=expires is None,
+        comment=None,
+        comment_url=None,
+        rest=rest,
+    )
+
+
+def _summary(cookie: Cookie) -> tuple[object, ...]:
+    """What matters of a cookie, attribute names in lower case (cookiejar keeps the server's case)."""
+    rest = {k.lower(): v for k, v in getattr(cookie, "_rest", {}).items()}
+    return cookie.name, cookie.value, cookie.domain, cookie.path, cookie.expires, cookie.secure, rest
+
+
+def test_saved_cookies_come_back_with_every_attribute(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path)
+    saved = [
+        _cookie(),
+        _cookie(
+            "MOODLEID1_", domain=".example.org", expires=LATER, secure=False, http_only=False, same_site=None
+        ),
+    ]
+    store.save_cookies(BASE, saved)
+
+    loaded = store.load_cookies(BASE)
+    assert loaded is not None
+    assert sorted(map(_summary, loaded)) == sorted(map(_summary, saved))
+
+
+def test_cookies_set_by_moodle_through_httpx_keep_their_attributes(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path)
+    response = httpx.Response(
+        200,
+        headers={"set-cookie": "MoodleSession=abc; path=/; SECURE; httponly; SameSite=Lax"},
+        request=httpx.Request("GET", f"{BASE}/my/"),
+    )
+    cookies = httpx.Cookies()
+    cookies.extract_cookies(response)
+    store.save_cookies(BASE, cookies.jar)
+
+    [cookie] = store.load_cookies(BASE) or []
+    rest = {k.lower(): v for k, v in getattr(cookie, "_rest", {}).items()}
+    assert cookie.secure
+    assert "httponly" in rest
+    assert rest["samesite"] == "Lax"
+
+
+def test_expired_cookies_are_not_loaded(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path)
+    expired = _cookie("expired", expires=int(time.time()) - 60)
+    store.save_cookies(BASE, [_cookie("session"), _cookie("valid", expires=LATER)])
+    # Saving drops expired cookies; one written earlier, now expired, is dropped on loading.
+    late = LWPCookieJar()
+    late.set_cookie(expired)
+    path = store.path_for(BASE)
+    path.write_text(path.read_text() + late.as_lwp_str(ignore_discard=True, ignore_expires=True))
+
+    assert sorted(c.name for c in store.load_cookies(BASE) or []) == ["session", "valid"]
+
+
+@pytest.mark.parametrize("content", ['[{"name": "MoodleSession", "value": "abc"}]', "not cookies at all\n"])
+def test_a_file_that_is_not_a_session_file_means_no_session(tmp_path: Path, content: str) -> None:
+    store = SessionStore(tmp_path)
+    store.path_for(BASE).write_text(content)
+    assert store.load_cookies(BASE) is None
+
+
+@pytest.mark.parametrize("domain", ["moodle.example.org", ".example.org"])
+def test_loaded_cookies_are_sent_to_moodle_only(tmp_path: Path, domain: str) -> None:
+    store = SessionStore(tmp_path)
+    store.save_cookies(BASE, [_cookie(domain=domain, expires=LATER)])
+    sent: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request.headers.get("cookie"))
+        return httpx.Response(200)
+
+    saved = store.load_cookies(BASE)
+    assert saved is not None
+    with httpx.Client(transport=httpx.MockTransport(handler), cookies=httpx.Cookies(saved)) as client:
+        client.get(f"{BASE}/my/")
+        client.get("http://moodle.example.org/my/")  # a Secure cookie never travels in clear text
+        client.get("https://other.example.com/")
+    assert sent == ["MoodleSession=abc", None, None]

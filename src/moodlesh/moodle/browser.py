@@ -21,6 +21,7 @@ import threading
 import time
 from collections.abc import Callable, Generator, Mapping, Sequence
 from dataclasses import dataclass
+from http.cookiejar import Cookie
 from types import TracebackType
 from typing import Any, Final, Literal, Protocol, Self, TypeAlias, TypedDict, final
 
@@ -28,7 +29,7 @@ import nodriver as uc
 from nodriver import cdp
 
 from moodlesh.core.errors import ConnectionLostError
-from moodlesh.moodle.auth import RawCookie, SessionStore, is_moodle_page
+from moodlesh.moodle.auth import SessionStore, is_moodle_page
 from moodlesh.moodle.transport import (
     Transport,
     ajax_request_body,
@@ -40,6 +41,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_READY_TIMEOUT_S: Final = 300
 _POLL_INTERVAL_S: Final = 1.0
 _RETRY_ERRORCODES: Final = frozenset({"invalidsesskey", "servicerequireslogin"})
+_SAME_SITE = {
+    "strict": cdp.network.CookieSameSite.STRICT,
+    "lax": cdp.network.CookieSameSite.LAX,
+    "none": cdp.network.CookieSameSite.NONE,
+}
 
 Notify: TypeAlias = Callable[[str], None]
 """Shows a message to the user (e.g. "complete the login in the browser window")."""
@@ -183,6 +189,7 @@ class BrowserTransport(Transport):
         try:
             browser = await uc.start(headless=False)
             try:
+                await self.restore_cookies(browser)
                 tab = await browser.get()
                 session = _TabSession(tab, cfg)
 
@@ -193,37 +200,76 @@ class BrowserTransport(Transport):
 
                 browser.add_handler(cdp.target.TargetDestroyed, on_destroyed)
                 await browser.send(cdp.target.set_discover_targets(discover=True))
-
                 await session.ensure_ready()
+                await self.save_cookies(browser)
                 self._stop = asyncio.Event()
                 self._session = session
                 self._loop = asyncio.get_running_loop()
                 self._ready.set_result(None)
                 await self._stop.wait()
+                await self.save_cookies(browser)
             finally:
                 browser.stop()
-
-            # async with async_playwright() as p:
-            #    browser = await p.chromium.launch(headless=False, **cfg.launch_options)
-            #    try:
-            #        context = await browser.new_context()
-            #        await _restore_cookies(context, cfg)
-            #        session = _TabSession(await context.new_page(), cfg)
-            #        await session.ensure_ready()
-            #        await _save_cookies(context, cfg)
-            #        self._stop = asyncio.Event()
-            #        self._session = session
-            #        self._loop = asyncio.get_running_loop()
-            #        self._ready.set_result(None)
-            #        await self._stop.wait()  # calls run on this loop meanwhile
-            #        await _save_cookies(context, cfg)
-            #    finally:
-            #        await browser.close()
         except BaseException as exc:  # must be forwarded to the main thread
             if not self._ready.done():
                 self._ready.set_exception(exc)
             else:
                 logger.error("the browser closed: %s", exc)
+
+    @staticmethod
+    def _from_cdp_cookie(c: cdp.network.Cookie) -> Cookie:
+        """Convert a Chrome cookie; session cookies (`expires == -1` in CDP) keep no expiry."""
+        rest: dict[str, str] = {}
+        if c.http_only:
+            rest["HttpOnly"] = ""
+        if c.same_site is not None:
+            rest["SameSite"] = c.same_site.value
+        expires = None if c.session or c.expires is None or c.expires < 0 else int(c.expires)
+        session = expires is None
+        return Cookie(
+            version=0,
+            name=c.name,
+            value=c.value,
+            port=None,
+            port_specified=False,
+            domain=c.domain,
+            domain_specified=c.domain.startswith("."),
+            domain_initial_dot=c.domain.startswith("."),
+            path=c.path,
+            path_specified=True,
+            secure=c.secure,
+            expires=expires,
+            discard=session,
+            comment=None,
+            comment_url=None,
+            rest=rest,
+        )
+
+    async def save_cookies(self, browser: uc.Browser) -> None:
+        cookies = [c for c in await browser.cookies.get_all() if isinstance(c, cdp.network.Cookie)]
+        self._config.store.save_cookies(self._config.base_url, [self._from_cdp_cookie(c) for c in cookies])
+
+    def _to_cookie_param(self, c: Cookie) -> cdp.network.CookieParam:
+        same_site = c.get_nonstandard_attr("SameSite")
+        host = c.domain.lstrip(".")
+        return cdp.network.CookieParam(
+            name=c.name,
+            value=c.value or "",
+            domain=c.domain if c.domain.startswith(".") else None,
+            url=None
+            if c.domain.startswith(".")
+            else f"{'https' if c.secure else 'http'}://{host}{c.path or '/'}",
+            path=c.path or "/",
+            secure=c.secure,
+            http_only=c.has_nonstandard_attr("HttpOnly"),
+            same_site=_SAME_SITE.get(same_site.lower()) if same_site else None,
+            expires=cdp.network.TimeSinceEpoch(c.expires) if c.expires else None,
+        )
+
+    async def restore_cookies(self, browser: uc.Browser) -> None:
+        await browser.cookies.set_all(
+            [self._to_cookie_param(c) for c in self._config.store.load_cookies(self._config.base_url) or []]
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,7 +301,7 @@ class _TabSession:
         """Wait until the tab shows an authenticated Moodle page and return its sesskey.
 
         Raises:
-            AuthenticationError: the window was closed, or Moodle did not become
+            ConnectionLostError: the window was closed, or Moodle did not become
                 ready in time.
         """
         cfg = self._cfg
@@ -343,24 +389,3 @@ class _TabSession:
 
     async def _wait(self, seconds: float) -> None:
         await self._tab.wait(seconds)
-
-
-async def _restore_cookies(context: _Context, cfg: _Config) -> None:
-    saved: list[RawCookie] = cfg.store.load_raw(cfg.base_url) or []
-    usable: list[RawCookie] = [c for c in saved if c.get("domain") and c.get("path")]
-    if usable:
-        try:
-            await context.add_cookies(usable)
-            logger.debug("restored %d saved cookies", len(usable))
-        except cfg.page_error as exc:  # file from an older version: the user logs in again
-            logger.debug("saved cookies not usable: %s", exc)
-
-
-async def _save_cookies(context: _Context, cfg: _Config) -> None:
-    try:
-        cookies: list[RawCookie] = [dict(c) for c in await context.cookies(cfg.base_url)]
-    except cfg.page_error as exc:
-        logger.debug("cannot read the cookies from the browser: %s", exc)
-        return
-    path = cfg.store.save_raw(cfg.base_url, cookies)
-    logger.debug("session saved to %s", path)
