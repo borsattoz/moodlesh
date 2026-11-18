@@ -1,9 +1,12 @@
 """Session persistence and browser-less login.
 
 The session (its cookies) is saved by `SessionStore` in a file readable only by
-the user: while it is valid it is as good as a password. The format is
-Playwright's cookie format, so the same file serves both the browser transport
-(`moodlesh.moodle.browser`) and the HTTP one.
+the user: while it is valid it is as good as a password. The cookies are the
+standard library's (`http.cookiejar.Cookie`), the type that httpx and requests
+use as well, and the file is the standard library's LWP format
+(`LWPCookieJar`), which keeps every attribute (expiry, Secure, HttpOnly,
+SameSite). So the same file serves both the browser transport
+(`moodlesh.moodle.browser`) and the HTTP one, with no conversion of our own.
 
 Interactive login (SSO included) happens in the browser: see `BrowserTransport`.
 This module keeps the username/password login for manual authentication.
@@ -11,12 +14,13 @@ This module keeps the username/password login for manual authentication.
 
 from __future__ import annotations
 
-import json
+import logging
 import os
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from http.cookiejar import Cookie, CookieJar, LoadError, LWPCookieJar
 from pathlib import Path
-from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -30,7 +34,7 @@ _LOGINTOKEN_RE = re.compile(r'name="logintoken"\s+value="([^"]*)"')
 # authentication redirects go through: being there does not mean being logged in.
 _AUTH_PATH_PREFIXES = ("/login/", "/auth/", "/Shibboleth.sso/", "/shibboleth-ds/", "/simplesaml/", "/saml/")
 
-RawCookie = dict[str, Any]
+logger = logging.getLogger(__name__)
 
 
 def default_state_dir() -> Path:
@@ -47,37 +51,40 @@ class SessionStore:
     def path_for(self, base_url: str) -> Path:
         parts = urlsplit(base_url)
         slug = re.sub(r"[^A-Za-z0-9.-]+", "_", f"{parts.netloc}{parts.path}".rstrip("/"))
-        return self.directory / f"session-{slug}.json"
+        return self.directory / f"session-{slug}.lwp"
 
-    def load_raw(self, base_url: str) -> list[RawCookie] | None:
-        """The saved cookies, in Playwright's format (name, value, domain, path, ...)."""
+    def load_cookies(self, base_url: str) -> CookieJar | None:
+        """The saved cookies that have not expired, or None if there is no usable session file.
+
+        The jar works as it is with httpx (`httpx.Cookies(jar)`) and with
+        requests (`session.cookies.update(jar)`).
+        """
         path = self.path_for(base_url)
         if not path.exists():
             return None
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return [c for c in data if isinstance(c, dict) and "name" in c and "value" in c]
+        jar = LWPCookieJar()
+        try:
+            # Session cookies (no expiry) are kept: they last as long as the session on Moodle.
+            jar.load(str(path), ignore_discard=True, ignore_expires=False)
+        except LoadError:  # not a session file of ours
+            logger.debug("session file not readable: ignored")
+            return None
+        return jar
 
-    def save_raw(self, base_url: str, cookies: list[RawCookie]) -> Path:
+    def save_cookies(self, base_url: str, cookies: Iterable[Cookie]) -> Path:
+        """Save `cookies`: a jar of the standard library, of httpx (`.jar`) or of requests."""
+        jar = LWPCookieJar()
+        for cookie in cookies:
+            jar.set_cookie(cookie)
+        content = "#LWP-Cookies-2.0\n" + jar.as_lwp_str(ignore_discard=True, ignore_expires=False)
         path = self.path_for(base_url)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         # Created with mode 600 right away, so it is never exposed, not even briefly.
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         os.fchmod(fd, 0o600)  # also tighten a file that already existed with looser permissions
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(cookies, fh)
+            fh.write(content)
         return path
-
-    def load(self, base_url: str) -> httpx.Cookies | None:
-        raw = self.load_raw(base_url)
-        return None if raw is None else to_httpx_cookies(raw)
-
-    def save(self, base_url: str, cookies: httpx.Cookies) -> Path:
-        raw = [
-            {"name": c.name, "value": c.value, "domain": c.domain, "path": c.path or "/"}
-            for c in cookies.jar
-            if c.value is not None
-        ]
-        return self.save_raw(base_url, raw)
 
     def delete(self, base_url: str) -> bool:
         path = self.path_for(base_url)
@@ -85,13 +92,6 @@ class SessionStore:
             path.unlink()
             return True
         return False
-
-
-def to_httpx_cookies(raw: list[RawCookie]) -> httpx.Cookies:
-    cookies = httpx.Cookies()
-    for c in raw:
-        cookies.set(c["name"], c["value"], domain=c.get("domain") or "", path=c.get("path") or "/")
-    return cookies
 
 
 def login_with_password(

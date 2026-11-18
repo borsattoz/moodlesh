@@ -12,8 +12,9 @@ release yet: fixes go to the `main` branch.
 ## What moodlesh stores and sends
 
 - **Session**: the Moodle session cookies are saved in
-  `~/.local/state/moodlesh/session-<host>.json` (or under `$XDG_STATE_HOME`),
-  with permissions `600`. While valid, they give the same access as your
+  `~/.local/state/moodlesh/session-<host>.lwp` (or under `$XDG_STATE_HOME`),
+  with permissions `600`, keeping each cookie's expiry and its `Secure`,
+  `HttpOnly` and `SameSite` attributes. While valid, they give the same access as your
   password. `moodlesh logout` ends the session on Moodle (when the site allows
   it) and deletes the file.
 - **Change journal**: `changes.jsonl` in the same directory (permissions `600`)

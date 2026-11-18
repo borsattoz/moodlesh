@@ -114,6 +114,14 @@ Moodle error codes (verified on 4.5):
   loop; `call()` submits a coroutine with `run_coroutine_threadsafe` and waits. `AjaxSessionTransport`
   (httpx) and `RestTransport` (token) share request/response handling
   (`ajax_request_body`, `decode_ajax_response`).
+- The session file (`SessionStore`, `moodle/auth.py`) holds standard library
+  cookies (`http.cookiejar.Cookie`) in the standard library's LWP format
+  (`LWPCookieJar`), which keeps expiry, `Secure`, `HttpOnly` and `SameSite`.
+  httpx and requests use the same cookie type, so there is no conversion:
+  `httpx.Cookies(store.load_cookies(url))`, `store.save_cookies(url,
+  cookies.jar)`; a requests jar goes in and out as it is. Cookiejar keeps
+  attribute names as the server wrote them (`HttpOnly`, `httponly`): compare
+  them in lower case.
 - Structure comes from one call, `core_courseformat_get_state`. Subsections
   are `mod_subsection` modules whose `delegatesectionid` points to a section
   with `component == "mod_subsection"`. Renaming uses

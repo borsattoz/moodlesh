@@ -39,6 +39,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+import httpx
 from rich.console import Console
 
 from moodlesh import __version__
@@ -240,7 +241,8 @@ def _login(args: argparse.Namespace, console: Console) -> int:
     if args.password:
         require_secure_connection(url, "a password")  # before asking for the password, not after
         username = args.username or input("username: ")
-        store.save(url, login_with_password(url, username, getpass.getpass("password: ")))
+        cookies = login_with_password(url, username, getpass.getpass("password: "))
+        store.save_cookies(url, cookies.jar)
     else:
         console.print("opening the browser: complete the login, the window will close by itself")
         # Opening waits for an authenticated Moodle page; closing saves the session.
@@ -248,10 +250,10 @@ def _login(args: argparse.Namespace, console: Console) -> int:
             url, store=store, notify=_notifier(console), launch_options=_launch_options()
         ).close()
     if transport == "http":
-        cookies = store.load(url)
-        assert cookies is not None
+        saved = store.load_cookies(url)
+        assert saved is not None
         # With the http transport the session must also work outside the browser.
-        verify_session(url, cookies)
+        verify_session(url, httpx.Cookies(saved))
     console.print(f"[green]session saved[/green] to {store.path_for(url)}")
     return EXIT_OK
 
@@ -259,11 +261,11 @@ def _login(args: argparse.Namespace, console: Console) -> int:
 def _logout(args: argparse.Namespace, console: Console) -> int:
     url = _require_url(args)
     store = SessionStore()
-    cookies = store.load(url)
-    if cookies is None:
+    saved = store.load_cookies(url)
+    if saved is None:
         console.print("no saved session")
         return EXIT_OK
-    ended = end_server_session(url, cookies)
+    ended = end_server_session(url, httpx.Cookies(saved))
     store.delete(url)
     console.print("session ended on Moodle and deleted" if ended else "session deleted from this computer")
     return EXIT_OK

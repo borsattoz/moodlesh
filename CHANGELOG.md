@@ -77,6 +77,12 @@ Nothing has been released yet. This section describes what the first release,
   shell open. In the library, transports raise `ConnectionLostError` for this
   (`SessionExpiredError` for an invalid session or token).
 
+- The session file uses the standard library's cookie format (LWP,
+  `session-<host>.lwp`) instead of the cookie format of one browser library.
+  It keeps each cookie's expiry and its `Secure`, `HttpOnly` and `SameSite`
+  attributes for every transport: a session saved by the `http` transport no
+  longer loses them. Expired cookies are not loaded.
+
 ### Security
 
 - `moodlesh login --password` (and `login_with_password` in the library)
