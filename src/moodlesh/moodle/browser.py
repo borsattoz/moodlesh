@@ -19,7 +19,7 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Callable, Generator, Mapping, Sequence
+from collections.abc import Callable, Generator, Mapping
 from dataclasses import dataclass
 from http.cookiejar import Cookie
 from types import TracebackType
@@ -68,15 +68,6 @@ class _Tab(Protocol):
 
     @property
     def url(self) -> str: ...
-
-
-# TODO(borsattoz) manage cookies with nodriver
-class _Context(Protocol):
-    """The part of a Playwright async `BrowserContext` this module uses."""
-
-    async def add_cookies(self, cookies: Sequence[Any]) -> None: ...
-
-    async def cookies(self, urls: str | Sequence[str] | None = ...) -> Sequence[Mapping[str, object]]: ...
 
 
 @final
